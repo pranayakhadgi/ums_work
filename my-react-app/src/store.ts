@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import create from 'zustand';
 
 interface AppState {
     count: number; increment: () => void; decrement: () => void;
