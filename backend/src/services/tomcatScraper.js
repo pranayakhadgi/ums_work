@@ -1,7 +1,9 @@
 // Backend src/services/tomcatScraper.js
 // Purpose: Fetch and parse the Tomcat status page to extract deployed application context paths.
-
 const https = require('https');   // Node's native HTTPS module
+
+const fs = require('fs');
+const path = require('path');
 
 /**
 
@@ -10,6 +12,29 @@ const https = require('https');   // Node's native HTTPS module
 - @returns {Promise<Array<{ name: string, url: string }>>}
 */
 async function scrapeTomcatStatus() {
+    //test 
+    if(process.env.USE_TEST_FILE === 'true') {
+        const filePath = path.join(__dirname, '..', 'test-status.html');
+        const data = fs.readFileSync(filePath, 'utf-8');
+        const lines = data.split('\n');
+        const endpoints = [];
+        const contextRegex = /localhost\s+(\/[^\s]+)/;
+        for (const line of lines) {
+            const match = line.match(contextRegex);
+            if (match) {
+                const contextPath = match[1];
+                const fullUrl = `${process.env.TOMCAT_SCHEME}://${process.env.TOMCAT_HOST}:${process.env.TOMCAT_PORT}${contextPath}`;
+                endpoints.push({
+                    name: contextPath,
+                    url: fullUrl,
+                });
+            }
+        }
+        if(endpoints.length === 0) {
+            throw new Error('No context paths found in test file. Check the regex or file format.');
+        }
+        return Promise.resolve(endpoints);
+    }
     const url = process.env.TOMCAT_STATUS_URL;
     const user = process.env.TOMCAT_USER;
     const pass = process.env.TOMCAT_PASS;
