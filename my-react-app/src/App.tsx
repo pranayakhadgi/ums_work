@@ -1,18 +1,17 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import MonitorDashboard from './components/MonitorDashboard';
+import './App.css';
 
-function MainPage() {
-  return(
+export default function App() {
+  return (
     <Router>
       <Routes>
-        {/*routes the path | tailwind configured at the component level*/} 
-        <Route path="/" element ={<MonitorDashboard />} />
+        {/* main dashboard route */}
+        <Route path="/" element={<MonitorDashboard />} />
 
-        {/*fallback route*/}
-        <Route path="*" element={<Navigate to="/" replace/>} />
+        {/* fallback — redirect anything unknown back to home */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>
-  ); 
+  );
 }
-
-export default MainPage;
