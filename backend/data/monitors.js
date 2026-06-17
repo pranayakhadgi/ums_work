@@ -6,23 +6,26 @@ function getAll() {
 
 
 //adds on top of the preexisting monitors?
-function addMultiple(newMonitors) {
+function createMonitor({ name, url, status, checkedAt}) {
     //for each new monitors, it adds the id and other default fields
-    const created = newMonitors.map((item, index) => {
-        const monitor = {
-            id: Date.now().toString() + index,
-            name:item.name,
-            url:item.url,
+const monitor = {
+        id: Date.now().toString() + monitors.length,
+            name,
+            url,
             environment: 'Dev',
-            status: 'Unknown',
-            lastChecked: null,
-            uptime7days: null,
-            uptime30days: null,createdAt: new Date().toISOString(),
-        };  
+            status,
+            lastChecked: checkedAt,
+            uptime7days: 0,
+            uptime30days: 0,
+            createdAt: new Date().toISOString(),
+        };  //lastChecked --> checkedAt on server
+        //status gets updated on the server via pinger.js
         monitors.push(monitor);
         return monitor;
-    });
-    return created;
 }
 
-module.exports = { getAll, addMultiple };
+function getMultiple(ids) {
+    return monitors.filter(m => ids.includes(m.id));
+}
+
+module.exports = { getAll, getMultiple, createMonitor };
