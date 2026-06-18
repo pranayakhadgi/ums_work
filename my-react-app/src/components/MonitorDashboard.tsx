@@ -8,82 +8,70 @@ export default function MonitorDashboard() {
   const { monitors, loading, error, loadMonitors, discover } = useMonitorStore();
   const [autoRefresh, setAutoRefresh] = useState(false);
 
-  // initial load
   useEffect(() => {
     loadMonitors();
-  }, []);
+  }, [loadMonitors]);
 
-  // auto-refresh every 30 s when toggled on
   useEffect(() => {
     if (!autoRefresh) return;
-    const interval = setInterval(() => loadMonitors(), 30_000);
+    const interval = setInterval(() => {
+      loadMonitors();
+    }, 30_000);
     return () => clearInterval(interval);
   }, [autoRefresh, loadMonitors]);
 
   return (
-    <div className="dashboard">
-      {/* ── Header ── */}
-      <div className="dashboard-header">
-        <h1 className="dashboard-title">
-          <span className="dot" />
-          Uptime Monitor
-        </h1>
-
-        <div className="header-actions">
-          <label className="toggle-label">
+    <div className='max-w-4xl mx-auto p-6 space-y-8'>
+      <div className='flex items-center justify-between'>
+        <h1 className='text-3xl font-bold text-grey-100'>Uptime Monitor</h1>
+        <div className='flex items-center gap-2 text-sm text-gray-300 cursor-pointer'>
+          <label className='flex items-center gap-2 text-sm text-gray-300 cursor-pointer'>
             <input
-              type="checkbox"
+              type='checkbox'
               checked={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.checked)}
+              className='accent-blue-500'
             />
-            Auto-refresh
           </label>
-
           <button
-            id="btn-refresh"
             onClick={() => loadMonitors()}
             disabled={loading}
-            className="btn btn-secondary"
+            className='flex items-center gap-1 text-sm text-gray-300 hover:text-white disabled:opacity-50'
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'spinning' : ''}`} size={14} />
+            <RefreshCw className='w-4 h-4' />
             Refresh
-          </button>
-
-          <button
-            id="btn-scan"
-            onClick={() => discover()}
-            disabled={loading}
-            className="btn btn-success"
-          >
-            {loading ? 'Scanning…' : 'Scan Tomcat Server'}
           </button>
         </div>
       </div>
 
-      {/* ── Bulk paste panel ── */}
-      <div className="panel">
-        <p className="panel-title">Add monitors</p>
-        <BulkPasteArea />
-      </div>
+      <BulkPasteArea />
 
-      {/* ── Feedback states ── */}
+      <button
+        onClick={() => useMonitorStore.getState().discover()}
+        disabled={loading}
+        className='bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white font-medium py-2 px-4 rounded-lg transition-colors'
+      >
+        { loading ? 'Scanning...' : 'Scan Tomcat Server' }
+      </button>
+
       {loading && monitors.length === 0 && (
-        <div className="msg-loading">Loading monitors…</div>
+        <div className='text-center text-gray-400'>Loading monitors...</div>
       )}
 
       {error && (
-        <div className="msg-error">{error}</div>
-      )}
-
-      {!loading && monitors.length === 0 && !error && (
-        <div className="msg-empty">
-          No monitors yet — paste some URLs above or click <strong>Scan Tomcat Server</strong>.
+        <div className='bg-red-900/30 border border-red-700 text-red-300 p-4 rounded-lg'>
+          {error}
         </div>
       )}
 
-      {/* ── Monitor grid ── */}
+      {!loading && monitors.length === 0 && !error && (
+        <div className='text-center text-gray-500 py-12'>
+          No monitors yet. Paste some URLs above.
+        </div>
+      )}
+
       {monitors.length > 0 && (
-        <div className="monitor-grid">
+        <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-3'>
           {monitors.map((monitor) => (
             <MonitorCard key={monitor.id} monitor={monitor} />
           ))}
