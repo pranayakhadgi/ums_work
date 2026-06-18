@@ -1,4 +1,4 @@
-import create from 'zustand';
+import { create } from 'zustand'; // FIX: zustand v4+ exports `create` as a named export, not default
 
 interface AppState {
     count: number; increment: () => void; decrement: () => void;
