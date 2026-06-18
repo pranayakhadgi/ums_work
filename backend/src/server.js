@@ -1,60 +1,47 @@
-require('dotenv').config();
 const express = require('express');
-const cors    = require('cors');
-const path    = require('path');
-const app     = express();
+const app = express();
+//add temp js store
+const { getAll, createMonitor } = require('./data/monitors');
+const discoverRouter = require('./routes/discover');
 
-// ── Data store & services ─────────────────────────────────────────────────────
-const { getAll, getMultiple, createMonitor } = require('../data/monitors');
-const { pingUrl }      = require('./services/pinger');
-const discoverRouter   = require('./routes/discover');
+app.use(express.json());//middle parsing json body from requests
 
-// ── Middleware ────────────────────────────────────────────────────────────────
-app.use(cors());                   // allow cross-origin requests from Vite dev server
-app.use(express.json());           // parse JSON request bodies
-
-// ── Serve test-status.html at GET /test-status ────────────────────────────────
-app.get('/test-status', (req, res) => {
-    res.sendFile(path.join(__dirname, '..', 'test-status.html'));
-});
-
-// ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/api/discover', discoverRouter);
 
-// GET /api/monitors – return all monitors from the in-memory store
+//GET /monitors
 app.get('/api/monitors', (req, res) => {
-    const monitors = getAll();
-    res.json(monitors);
-});
+    const monitors = getAll();//add data from the js store
+    res.json({ monitors });
+});``
 
-// POST /api/monitors/bulk – ping a list of URLs and store results
+//middleware tester
 app.post('/api/monitors/bulk', async (req, res) => {
     const { monitors } = req.body;
     if (!Array.isArray(monitors) || monitors.length === 0) {
-        return res.status(400).json({ error: 'monitors array is required' });
+        return res.status(400).json({ error: 'monitors array is required'});
     }
 
+    //initialize result array first
     const results = [];
     for (const item of monitors) {
         const { name, url } = item;
         if (!name || !url) continue;
 
         const { status, checkedAt } = await pingUrl(url);
-        const monitor = createMonitor({ name, url, status, checkedAt });
+        //fetched url updates the status and checkedAt
+        const monitor = createMonitor({ name, url, status, checkedAt});
         results.push(monitor);
     }
-    res.status(201).json(results);
+    res.status(201).json(results);  
+
 });
 
-// ── 404 fallback ──────────────────────────────────────────────────────────────
 app.use((req, res) => {
-    res.status(404).json({ error: 'Not found' });
+    res.status(404).json({ error: 'Not found'});
 });
 
-// ── Start ─────────────────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 5173; 
 app.listen(PORT, () => {
-    console.log(`Backend listening on http://localhost:${PORT}`);
-    console.log(`Test status page: http://localhost:${PORT}/test-status`);
+    console.log(`App listening on port ${PORT}`);
     console.log('Press Ctrl+C to quit.');
 });
