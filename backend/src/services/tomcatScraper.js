@@ -6,11 +6,11 @@ const path = require('path');
 async function scrapeTomcatStatus() {
     // Test mode: Parse the hybrid test-status.html format
     if (process.env.USE_TEST_FILE === 'true') {
-        const filePath = path.join(__dirname, '..','..', 'test-status.html');
+        const filePath = path.join(__dirname, '..', 'test-status.html');
         const data = await fs.promises.readFile(filePath, 'utf-8'); // Async, non-blocking
         
         const endpoints = [];
-        const lines = data.split('\n').filter(line => line.trim());
+        const lines = data.split('\n').filter(line => line.trim() && !line.trim().startsWith('#'));
         
         for (const line of lines) { 
             // Format A: Pipe-delimited "Name | URL" (your test-status.html reality)
