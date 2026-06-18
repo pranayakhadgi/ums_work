@@ -7,8 +7,10 @@ export interface Monitor {
   environment: string;
   status: string;
   lastChecked: string | null;
-  uptime7Days: number;
-  uptime30Days: number;
+  uptime7days: number;  // FIX: backend sends lowercase 'd' (uptime7days, not uptime7Days)
+  uptime30days: number; // FIX: backend sends lowercase 'd' (uptime30days, not uptime30Days)
+  errorCategory?: string;  // Optional: returned by pinger.js when a URL check results in DOWN status
+  errorMessage?: string;   // Optional: detailed error message from pinger.js on check failure
   createdAt: string;
 }
 
