@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useMonitorStore } from '../store/monitorStore';
 
+//make changes on the variable inference here
 export default function BulkPasteArea() {
   const [text, setText]   = useState('');
   const [error, setError] = useState<string | null>(null);
