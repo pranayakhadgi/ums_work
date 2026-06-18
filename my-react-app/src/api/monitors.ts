@@ -17,7 +17,8 @@ export interface Monitor {
 export async function fetchMonitors(): Promise<Monitor[]> {
   const res = await fetch(BASE);
   if (!res.ok) throw new Error('Failed to fetch monitors');
-  return res.json();
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.monitors ?? [];
 }
 
 export async function addMonitorsBulk(items: { name: string; url: string }[]): Promise<Monitor[]> {
@@ -39,7 +40,8 @@ export async function discoverMonitors(): Promise<Monitor[]> {
   const res = await fetch('/api/discover', { method: 'POST'});
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(err.error || 'Failed to discover monitors');
+    throw new Error(err.error || err.message || 'Failed to discover monitors');
   }
-  return res.json();
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.monitors ?? [];
 }
