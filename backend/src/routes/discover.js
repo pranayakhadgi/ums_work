@@ -2,18 +2,18 @@ const {Router} = require('express');
 const { scrapeTomcatStatus } = require('../services/tomcatScraper');
 const { pingUrl } = require('../services/pinger');
 const data = require('../../data/monitors');
-const pLimit = require('p-limit'); // npm install p-limit
 
 const router = Router();
 
-// Architectural decision: Bounded concurrency
-// WHY: Promise.all with 100 endpoints creates 100 simultaneous TCP connections.
-//      This exhausts file descriptors and triggers rate limiting on target servers.
-//      p-limit(5) means max 5 concurrent pings, queueing the rest.
-const limit = pLimit(5);
-
 router.post('/', async (req, res) => {
     const startTime = Date.now();
+
+    // Architectural decision: Bounded concurrency
+    // WHY: Promise.all with 100 endpoints creates 100 simultaneous TCP connections.
+    //      This exhausts file descriptors and triggers rate limiting on target servers.
+    //      p-limit(5) means max 5 concurrent pings, queueing the rest.
+    const { default: pLimit } = await import('p-limit');
+    const limit = pLimit(5);
     
     // ── Phase 1: Discovery ─────────────────────────────────────────────────
     let discoveredEndpoints;

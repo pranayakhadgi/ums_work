@@ -78,6 +78,7 @@ a:hover { text-decoration: underline; }
   min-height: 100svh;
   display: flex;
   flex-direction: column;
+  width: 100%;
 }
 
 /* ── Dashboard shell ─────────────────────────────────────────────────────────── */
@@ -264,14 +265,16 @@ a:hover { text-decoration: underline; }
 /* ── Monitor card ────────────────────────────────────────────────────────────── */
 .monitor-card {
   background: var(--bg-card);
-  border: 1px solid var(--border);
+  border: 2px solid var(--border);
   border-radius: var(--radius);
-  padding: 18px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  padding: 8px 12px;
+  display: grid;
+  grid-template-rows: repeat(2, 1fr);
+  gap: 4px;
   box-shadow: var(--shadow-card);
   transition: border-color 0.2s, transform 0.2s;
+
+  min-width: 0;
 }
 .monitor-card:hover {
   border-color: var(--border-focus);

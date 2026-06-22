@@ -21,22 +21,27 @@ export default function MonitorDashboard() {
   }, [autoRefresh, loadMonitors]);
 
   return (
-    <div className='max-w-4xl mx-auto p-6 space-y-8'>
-      <div className='flex items-center justify-between'>
-        <h1 className='text-3xl font-bold text-grey-100'>Uptime Monitor</h1>
-        <div className='flex items-center gap-2 text-sm text-gray-300 cursor-pointer'>
+    <div className='w-full max-w-6xl mx-auto p-4 space-y-6'>
+      <div className='flex flex-col md:flex-row md:items-center md:justify-between gap-4'>
+        <h1 className='text-3xl font-bold text-gray-100'>
+          Uptime Monitor - Prototype
+          </h1>
+        <div className='flex items-center gap-4'>
+
+          {/* Checkbox */}
           <label className='flex items-center gap-2 text-sm text-gray-300 cursor-pointer'>
             <input
               type='checkbox'
               checked={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.checked)}
-              className='accent-blue-500'
+              className='w-4 h-4 accent-blue-500'
             />
+            Auto Refresh
           </label>
           <button
             onClick={() => loadMonitors()}
             disabled={loading}
-            className='flex items-center gap-1 text-sm text-gray-300 hover:text-white disabled:opacity-50'
+            className='flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 rounded-md transition-colors disabled:opacity-50'
           >
             <RefreshCw className='w-4 h-4' />
             Refresh
@@ -49,7 +54,7 @@ export default function MonitorDashboard() {
       <button
         onClick={() => useMonitorStore.getState().discover()}
         disabled={loading}
-        className='bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white font-medium py-2 px-4 rounded-lg transition-colors'
+        className='inline-flex items-center gap-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors'
       >
         { loading ? 'Scanning...' : 'Scan Tomcat Server' }
       </button>
@@ -71,10 +76,12 @@ export default function MonitorDashboard() {
       )}
 
       {monitors.length > 0 && (
-        <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-3'>
+        <div className="w-full">
+        <div className='monitor-grid'>
           {monitors.map((monitor) => (
             <MonitorCard key={monitor.id} monitor={monitor} />
           ))}
+        </div>
         </div>
       )}
     </div>
