@@ -12,7 +12,6 @@ export default function BulkPasteArea() {
   const isValidUrl = (str: string) => {
     try {
       new URL(str);
-      // fixed: was 'http;//' (typo) — must be 'http://'
       return str.startsWith('http://') || str.startsWith('https://');
     } catch {
       return false;
