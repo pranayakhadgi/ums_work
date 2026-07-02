@@ -1,49 +1,37 @@
-// Backend src/services/tomcatScraper.js
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
 async function scrapeTomcatStatus() {
-    // Test mode: Parse the hybrid test-status.html format
+    // ── Test mode ──
     if (process.env.USE_TEST_FILE === 'true') {
         const filePath = path.join(__dirname, '..', 'test-status.html');
-        const data = await fs.promises.readFile(filePath, 'utf-8'); // Async, non-blocking
+        const data = await fs.promises.readFile(filePath, 'utf-8');
         
         const endpoints = [];
         const lines = data.split('\n').filter(line => line.trim() && !line.trim().startsWith('#'));
         
         for (const line of lines) { 
-            // Format A: Pipe-delimited "Name | URL" (your test-status.html reality)
             const pipeMatch = line.match(/^(.+?)\s*\|\s*(https?:\/\/.+)$/);
             if (pipeMatch) {
-                endpoints.push({
-                    name: pipeMatch[1].trim(),
-                    url: pipeMatch[2].trim()
-                });
+                endpoints.push({ name: pipeMatch[1].trim(), url: pipeMatch[2].trim() });
                 continue;
             }
             
-            // Format B: Raw URL on its own line (first line of your test file)
             const urlMatch = line.match(/^(https?:\/\/\S+)$/);
             if (urlMatch) {
                 const url = urlMatch[1];
-                // Derive name from URL path or hostname
                 const urlObj = new URL(url);
-                const name = urlObj.pathname.replace(/^\//, '').replace(/\//g, '-') 
-                          || urlObj.hostname;
+                const name = urlObj.pathname.replace(/^\//, '').replace(/\//g, '-') || urlObj.hostname;
                 endpoints.push({ name, url });
                 continue;
             }
             
-            // Format C: Tomcat's actual "localhost /path" HTML output
             const tomcatMatch = line.match(/localhost\s+(\/[^\s]+)/);
             if (tomcatMatch) {
                 const contextPath = tomcatMatch[1];
                 const fullUrl = `${process.env.TOMCAT_SCHEME}://${process.env.TOMCAT_HOST}:${process.env.TOMCAT_PORT}${contextPath}`;
-                endpoints.push({
-                    name: contextPath,
-                    url: fullUrl
-                });
+                endpoints.push({ name: contextPath, url: fullUrl });
             }
         }
         
@@ -58,7 +46,7 @@ async function scrapeTomcatStatus() {
         return endpoints;
     }
     
-    // ── Production mode: Real Tomcat HTTPS scrape ──────────────────────────
+    // ── Production mode ──
     const url = process.env.TOMCAT_STATUS_URL;
     const user = process.env.TOMCAT_USER;
     const pass = process.env.TOMCAT_PASS;
@@ -70,10 +58,12 @@ async function scrapeTomcatStatus() {
     const auth = 'Basic ' + Buffer.from(user + ':' + pass).toString('base64');
 
     return new Promise((resolve, reject) => {
-        const req = https.get(url, {
+        const client = url.startsWith('https:') ? https : require('http');
+        
+        const req = client.get(url, {
             headers: { 'Authorization': auth },
             rejectUnauthorized: false,
-            timeout: 10000, // 10s hard ceiling
+            timeout: 10000,
         }, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
@@ -84,19 +74,35 @@ async function scrapeTomcatStatus() {
                 
                 const lines = data.split('\n');
                 const endpoints = [];
-                const contextRegex = /localhost\s+(\/[^\s]+)/;
                 
                 for (const line of lines) {
-                    const match = line.match(contextRegex);
-                    if (match) {
-                        const contextPath = match[1];
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+                    
+                    // Format 1: HTML table / plain text containing "localhost /path"
+                    const htmlMatch = trimmed.match(/localhost.*?(\/[^\s<]+)/i);
+                    if (htmlMatch) {
+                        const contextPath = htmlMatch[1];
                         const fullUrl = `${process.env.TOMCAT_SCHEME}://${process.env.TOMCAT_HOST}:${process.env.TOMCAT_PORT}${contextPath}`;
                         endpoints.push({ name: contextPath, url: fullUrl });
-                    }   
+                        continue;
+                    }
+                    
+                    // Format 2: Tomcat text API (/manager/text/list)
+                    // Lines like: /manager:running:0:manager
+                    const textMatch = trimmed.match(/^\/([^:]+):/);
+                    if (textMatch) {
+                        const contextPath = '/' + textMatch[1];
+                        const fullUrl = `${process.env.TOMCAT_SCHEME}://${process.env.TOMCAT_HOST}:${process.env.TOMCAT_PORT}${contextPath}`;
+                        endpoints.push({ name: contextPath, url: fullUrl });
+                    }
                 }
 
                 if (endpoints.length === 0) {
-                    return reject(new Error('No context paths found in Tomcat response'));
+                    return reject(new Error(
+                        'No context paths found in Tomcat response. ' +
+                        'Ensure TOMCAT_STATUS_URL points to /manager/status or /manager/text/list'
+                    ));
                 }
                 resolve(endpoints);
             });
