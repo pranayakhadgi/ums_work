@@ -11,7 +11,7 @@ const app = express();
 //add temp js store
 const { getAll, createMonitor } = require('../data/monitors');
 const { pingUrl } = require('./services/pinger');
-const discoverRouter = require('./routes/discover');
+const discoverRouter = require('./routes/discovery');
 
 app.use(express.json());//middle parsing json body from requests
 
