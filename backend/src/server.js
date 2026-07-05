@@ -8,42 +8,76 @@ process.env.TOMCAT_HOST = process.env.TOMCAT_HOST || 'localhost';
 process.env.TOMCAT_PORT = process.env.TOMCAT_PORT || '8080';
 const express = require('express');
 const app = express();
-//add temp js store
-const { getAll, createMonitor } = require('../data/monitors');
-const { pingUrl } = require('./services/pinger');
-const discoverRouter = require('./routes/discovery');
+app.use(express.json()); // Middleware parsing JSON body from requests
 
-app.use(express.json());//middle parsing json body from requests
+// Choose routers based on DATABASE_URL configuration
+if (process.env.DATABASE_URL) {
+    console.log('[server] DATABASE_URL found. Running in PostgreSQL/Drizzle DB mode.');
+    const { discoveryRouter } = require('./routes/discovery');
+    const { monitorsRouter } = require('./routes/monitors');
+    app.use('/api/discover', discoveryRouter);
+    app.use('/api/monitors', monitorsRouter);
+} else {
+    console.log('[server] DATABASE_URL not found. Running in in-memory fallback/demo mode.');
+    const { scrapeTomcatStatus } = require('./services/tomcatScraper');
+    const { getAll, createMonitor } = require('../data/monitors');
+    const { pingUrl } = require('./services/pinger');
 
-app.use('/api/discover', discoverRouter);
+    // In-memory fallback discovery route
+    app.post('/api/discover', async (req, res) => {
+        try {
+            const endpoints = await scrapeTomcatStatus();
+            const results = [];
+            for (const endpoint of endpoints) {
+                const pingResult = await pingUrl(endpoint.url);
+                const monitor = createMonitor({
+                    name: endpoint.name,
+                    url: endpoint.url,
+                    status: pingResult.status,
+                    checkedAt: pingResult.checkedAt
+                });
+                results.push(monitor);
+            }
+            res.json({
+                meta: {
+                    discovered: endpoints.length,
+                    registered: results.length,
+                    failed: 0,
+                    durationMs: 0
+                },
+                monitors: results,
+                failures: []
+            });
+        } catch (error) {
+            console.error('[server] In-memory discovery failed:', error);
+            res.status(502).json({ error: 'Discovery failed', message: error.message });
+        }
+    });
 
-//GET /monitors
-app.get('/api/monitors', (req, res) => {
-    const monitors = getAll();//add data from the js store
-    res.json({ monitors });
-});
+    // In-memory fallback monitors routes
+    app.get('/api/monitors', (req, res) => {
+        const monitors = getAll();
+        res.json({ monitors });
+    });
 
-//middleware tester
-app.post('/api/monitors/bulk', async (req, res) => {
-    const { monitors } = req.body;
-    if (!Array.isArray(monitors) || monitors.length === 0) {
-        return res.status(400).json({ error: 'monitors array is required'});
-    }
+    app.post('/api/monitors/bulk', async (req, res) => {
+        const { monitors: items } = req.body;
+        if (!Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ error: 'monitors array is required'});
+        }
 
-    //initialize result array first
-    const results = [];
-    for (const item of monitors) {
-        const { name, url } = item;
-        if (!name || !url) continue;
+        const results = [];
+        for (const item of items) {
+            const { name, url } = item;
+            if (!name || !url) continue;
 
-        const { status, checkedAt } = await pingUrl(url);
-        //fetched url updates the status and checkedAt
-        const monitor = createMonitor({ name, url, status, checkedAt});
-        results.push(monitor);
-    }
-    res.status(201).json(results);  
-
-});
+            const { status, checkedAt } = await pingUrl(url);
+            const monitor = createMonitor({ name, url, status, checkedAt });
+            results.push(monitor);
+        }
+        res.status(201).json(results);  
+    });
+}
 
 app.use((req, res) => {
     res.status(404).json({ error: 'Not found'});
