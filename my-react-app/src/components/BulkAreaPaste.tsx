@@ -1,14 +1,13 @@
 import { useState } from 'react';
 import { useMonitorStore } from '../store/monitorStore';
 
-//make changes on the variable inference here
+
 export default function BulkPasteArea() {
   const [text, setText]   = useState('');
   const [error, setError] = useState<string | null>(null);
   const bulkAdd = useMonitorStore((state) => state.bulkAdd);
   const loading = useMonitorStore((state) => state.loading);
 
-  // check if the string is a valid URL
   const isValidUrl = (str: string) => {
     try {
       new URL(str);
@@ -25,14 +24,13 @@ export default function BulkPasteArea() {
     const lines = text
       .split('\n')
       .map((line) => line.trim())
-      .filter((line) => line.length > 0); // ensures non-empty lines
+      .filter((line) => line.length > 0);
 
     if (lines.length === 0) {
       setError('Paste at least one URL or "name | url" line.');
       return;
     }
 
-    // tries splitting each line by "|" and validates the format
     const monitors: { name: string; url: string }[] = [];
     for (const line of lines) {
       const parts = line.split('|').map((p) => p.trim());
@@ -41,7 +39,6 @@ export default function BulkPasteArea() {
           setError(`Invalid URL: "${line}". Use a full URL (e.g. http://host/health).`);
           return;
         }
-        // extracts the hostname as the name if no name is provided
         monitors.push({ name: new URL(parts[0]).hostname, url: parts[0] });
       } else if (parts.length === 2) {
         const [name, url] = parts;
