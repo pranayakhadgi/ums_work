@@ -1,48 +1,17 @@
-import {
-  pgTable,
-  uuid,
-  text,
-  timestamp,
-  integer,
-  boolean,
-  jsonb,
-  pgEnum,
-  unique
-} from 'drizzle-orm/pg-core';
+import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
 
-//enums
-export const roleEnum = pgEnum('role', ['admin', 'operator', 'viewer']);
-export const environmentEnum = pgEnum('environment', ['Dev', 'QA', 'Prod']);
-export const statusEnum = pgEnum('status', ['UP', 'DOWN', 'UNKNOWN', 'PAUSED']);
-export const errorCategoryEnum = pgEnum('error_category', [
-  'TIMEOUT',
-  'REFUSED',
-  'DNS_FAILURE',
-  'CERT_EXPIRED',
-  'UNKNOWN',
-  'PROBE_FAILURE'
-]);
-export const eventTypeEnum = pgEnum('event_type', [
-  'STATE_TRANSITION',
-  'DISCOVERY_COMPLETED',
-  'MONITOR_CREATED',
-  'MONITOR_UPDATED',
-  'MONITOR_DELETED',
-  'CHECK_COMPLETED',
-]);
 
-//users
-export const users = pgTable('users', {
-  id: uuid('id').primaryKey().defaultRandom(),
+export const users = sqliteTable('users', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   email: text('email').notNull().unique(),
   name: text('name').notNull(),
-  role: roleEnum('role').notNull().default('viewer'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  role: text('role').notNull().default('viewer'),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 
-//tomcat instances
-export const tomcatInstances = pgTable('tomcat_instances', {
-  id: uuid('id').primaryKey().defaultRandom(),
+
+export const tomcatInstances = sqliteTable('tomcat_instances', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   name: text('name').notNull(),
   scheme: text('scheme').notNull().default('http'),
   host: text('host').notNull(),
@@ -50,75 +19,127 @@ export const tomcatInstances = pgTable('tomcat_instances', {
   managerUrl: text('manager_url').notNull(),
   managerUser: text('manager_user').notNull(),
   managerPass: text('manager_pass').notNull(),
-  environment: environmentEnum('environment').notNull().default('Dev'),
-  isActive: boolean('is_active').notNull().default(true),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  environment: text('environment').notNull().default('Dev'),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 
-//discovered apps (candidate pool)
-export const discoveredApps = pgTable('discovered_apps', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  instanceId: uuid('instance_id')
-    .references(() => tomcatInstances.id)
-    .notNull(),
+
+export const discoveredApps = sqliteTable('discovered_apps', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  instanceId: text('instance_id').notNull().references(() => tomcatInstances.id),
   name: text('name').notNull(),
   contextPath: text('context_path').notNull(),
   tomcatState: text('tomcat_state').notNull(),
-  discoveredAt: timestamp('discovered_at', { withTimezone: true }).notNull().defaultNow(),
-  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
-  isPromoted: boolean('is_promoted').notNull().default(false),
-}, (table) => ({
-  unqInstanceContext: unique('discovered_apps_instance_context_unique')
-    .on(table.instanceId, table.contextPath),
-}));
+  discoveredAt: integer('discovered_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  isPromoted: integer('is_promoted', { mode: 'boolean' }).notNull().default(false),
+});
 
-//monitors (curated, active monitoring)
-export const monitors = pgTable('monitors', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  discoveredAppId: uuid('discovered_app_id').references(() => discoveredApps.id),
+
+export const monitors = sqliteTable('monitors', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  discoveredAppId: text('discovered_app_id').references(() => discoveredApps.id),
   name: text('name').notNull(),
   url: text('url').notNull(),
-  environment: environmentEnum('environment').notNull().default('Dev'),
-  status: statusEnum('status').notNull().default('UNKNOWN'),
-  lastChecked: timestamp('last_checked', { withTimezone: true }),
-  lastTransitioned: timestamp('last_transitioned', { withTimezone: true }),
-  checkInterval: integer('check_interval').notNull().default(30),//might switch to bullmq later
-  isEnabled: boolean('is_enabled').notNull().default(true),
-  createdBy: uuid('created_by').references(() => users.id),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  environment: text('environment').notNull().default('Dev'),
+  status: text('status').notNull().default('UNKNOWN'),
+  lastChecked: integer('last_checked', { mode: 'timestamp' }),
+  lastTransitioned: integer('last_transitioned', { mode: 'timestamp' }),
+  checkInterval: integer('check_interval').notNull().default(30),
+  isEnabled: integer('is_enabled', { mode: 'boolean' }).notNull().default(true),
+  createdBy: text('created_by').references(() => users.id),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
 });
 
-//(time-series)
-export const checkResults = pgTable('check_results', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  monitorId: uuid('monitor_id')
-    .references(() => monitors.id)
-    .notNull(),
-  status: statusEnum('status').notNull(),
+
+export const checkResults = sqliteTable('check_results', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  monitorId: text('monitor_id').notNull().references(() => monitors.id),
+  status: text('status').notNull(),
   responseTimeMs: integer('response_time_ms'),
-  errorCategory: errorCategoryEnum('error_category'),
+  errorCategory: text('error_category'),
   errorMessage: text('error_message'),
-  checkedAt: timestamp('checked_at', { withTimezone: true }).notNull().defaultNow(),
-  metadata: jsonb('metadata'),
+  checkedAt: integer('checked_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  metadata: text('metadata', { mode: 'json' }),
 });
 
-//state transitions (Event Log) 
-export const stateTransitions = pgTable('state_transitions', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  monitorId: uuid('monitor_id')
-    .references(() => monitors.id)
-    .notNull(),
-  fromStatus: statusEnum('from_status').notNull(),
-  toStatus: statusEnum('to_status').notNull(),
-  triggeredAt: timestamp('triggered_at', { withTimezone: true }).notNull().defaultNow(),
-  acknowledgedBy: uuid('acknowledged_by').references(() => users.id),
-  acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
+
+export const stateTransitions = sqliteTable('state_transitions', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  monitorId: text('monitor_id').notNull().references(() => monitors.id),
+  fromStatus: text('from_status').notNull(),
+  toStatus: text('to_status').notNull(),
+  triggeredAt: integer('triggered_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+  acknowledgedBy: text('acknowledged_by').references(() => users.id),
+  acknowledgedAt: integer('acknowledged_at', { mode: 'timestamp' }),
 });
 
-// ── Events (General Event Stream) ────────────────────────────────────────────
-export const events = pgTable('events', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  type: eventTypeEnum('type').notNull(),
-  payload: jsonb('payload'),
-  emittedAt: timestamp('emitted_at', { withTimezone: true }).notNull().defaultNow(),
+
+export const events = sqliteTable('events', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  type: text('type').notNull(),
+  payload: text('payload', { mode: 'json' }),
+  emittedAt: integer('emitted_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
+});
+
+
+
+export const instanceHealthSnapshots = sqliteTable('instance_health_snapshots', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  instanceId: text('instance_id').notNull().references(() => tomcatInstances.id),
+  connectorName: text('connector_name').notNull(), // e.g. "http-nio-8080"
+  threadInfo: text('thread_info', { mode: 'json' }).$type<{
+    maxThreads: number;
+    currentThreadCount: number;
+    currentThreadsBusy: number;
+    keepAliveCount: number;
+  }>(),
+  requestInfo: text('request_info', { mode: 'json' }).$type<{
+    maxProcessingTime: number;
+    processingTime: number;
+    requestCount: number;
+    errorCount: number;
+    bytesReceived: number;
+    bytesSent: number;
+  }>(),
+  memoryInfo: text('memory_info', { mode: 'json' }).$type<{
+    freeMemory: number; // MB
+    totalMemory: number; // MB
+    maxMemory: number; // MB
+  }>(),
+  rawResponse: text('raw_response'),
+  collectedAt: integer('collected_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
+});
+
+export const jvmSnapshots = sqliteTable('jvm_snapshots', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  instanceId: text('instance_id').notNull().references(() => tomcatInstances.id),
+  runtimeInfo: text('runtime_info', { mode: 'json' }).$type<{
+    vmName: string;
+    vmVersion: string;
+    vmVendor: string;
+    uptime: number; // in milliseconds
+  }>(),
+  memoryPools: text('memory_pools', { mode: 'json' }).$type<{
+    name: string;
+    type: string;
+    used: number; // bytes or MB depending on parser
+    committed: number;
+    max: number;
+  }[]>(),
+  gcInfo: text('gc_info', { mode: 'json' }).$type<{
+    name: string;
+    collectionCount: number;
+    collectionTime: number;
+  }[]>(),
+  osInfo: text('os_info', { mode: 'json' }).$type<{
+    osName: string;
+    osVersion: string;
+    architecture: string;
+    availableProcessors: number;
+    systemLoadAverage: number;
+  }>(),
+  rawResponse: text('raw_response'),
+  collectedAt: integer('collected_at', { mode: 'timestamp' }).$defaultFn(() => new Date()),
 });
