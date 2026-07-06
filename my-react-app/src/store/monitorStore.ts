@@ -44,8 +44,8 @@ export const useMonitorStore = create<MonitorStore>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const discovered = await discoverMonitors();
-      const existing = get().monitors;//loads existing monitors
-      const mergedMap = new Map<string, Monitor>();//map to avoid duplicates and ensure uniqueness based on monitor ID
+      const existing = get().monitors;
+      const mergedMap = new Map<string, Monitor>();
       existing.forEach(m => mergedMap.set(m.id, m));
       discovered.forEach(m => mergedMap.set(m.id, m));
 
