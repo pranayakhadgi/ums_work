@@ -10,8 +10,6 @@ import {
 } from '../db/schema';
 import type { PingResult } from '../services/pinger';
 
-// ── Monitors ─────────────────────────────────────────────────────────────────
-
 export async function getAllMonitors() {
   return db.select().from(monitors).orderBy(desc(monitors.createdAt));
 }
@@ -34,15 +32,45 @@ export async function getEnabledMonitors() {
 
 export async function createMonitor(data: {
   name: string;
-  url: string;
+  url?: string;
   environment?: 'Dev' | 'QA' | 'Prod';
   discoveredAppId?: string;
   createdBy?: string;
 }) {
+  // when url is omitted, derive it from the discovered app's instance
+  let url = data.url;
+  if (!url && data.discoveredAppId) {
+    const [app] = await db
+      .select()
+      .from(discoveredApps)
+      .where(eq(discoveredApps.id, data.discoveredAppId))
+      .limit(1);
+
+    if (!app) {
+      throw new Error(`discovered app ${data.discoveredAppId} not found`);
+    }
+
+    const [inst] = await db
+      .select()
+      .from(tomcatInstances)
+      .where(eq(tomcatInstances.id, app.instanceId))
+      .limit(1);
+
+    if (!inst) {
+      throw new Error(`instance ${app.instanceId} not found for discovered app`);
+    }
+
+    url = `${inst.scheme}://${inst.host}:${inst.port}${app.contextPath}`;
+  }
+
+  if (!url) {
+    throw new Error('url is required when discoveredAppId is not provided');
+  }
+
   const existing = await db
     .select()
     .from(monitors)
-    .where(eq(monitors.url, data.url))
+    .where(eq(monitors.url, url))
     .limit(1);
 
   if (existing.length > 0) {
@@ -53,6 +81,7 @@ export async function createMonitor(data: {
     .insert(monitors)
     .values({
       ...data,
+      url,
       environment: data.environment ?? 'Dev',
       status: 'UNKNOWN',
     })
@@ -63,6 +92,13 @@ export async function createMonitor(data: {
     name: monitor.name,
     url: monitor.url,
   });
+
+  if (data.discoveredAppId) {
+    await db
+      .update(discoveredApps)
+      .set({ isPromoted: true })
+      .where(eq(discoveredApps.id, data.discoveredAppId));
+  }
 
   return monitor;
 }
@@ -77,7 +113,6 @@ export async function updateMonitorStatus(
   const newStatus = result.status;
   const oldStatus = monitor.status;
 
-  // 1. Insert check result (time-series)
   await db.insert(checkResults).values({
     monitorId: id,
     status: newStatus,
@@ -87,7 +122,7 @@ export async function updateMonitorStatus(
     checkedAt: new Date(result.checkedAt),
   });
 
-  // 2. Detect state transition
+  // only record a transition from a known, active state
   const isTransition =
     oldStatus !== newStatus &&
     oldStatus !== 'UNKNOWN' &&
@@ -110,7 +145,6 @@ export async function updateMonitorStatus(
     });
   }
 
-  // 3. Update monitor current state
   const [updated] = await db
     .update(monitors)
     .set({
@@ -158,8 +192,6 @@ export async function deleteMonitor(id: string) {
   return deleted ?? null;
 }
 
-// ── History & Transitions ──────────────────────────────────────────────────
-
 export async function getMonitorHistory(monitorId: string, limit = 100) {
   return db
     .select()
@@ -178,8 +210,6 @@ export async function getStateTransitions(monitorId: string, limit = 50) {
     .limit(limit);
 }
 
-// ── Discovery ───────────────────────────────────────────────────────────────
-
 export async function getDiscoveredCandidates() {
   return db
     .select()
@@ -194,8 +224,6 @@ export async function upsertDiscoveredApp(data: {
   contextPath: string;
   tomcatState: string;
 }) {
-  // With the DB unique constraint, we can do ON CONFLICT update
-  // But Drizzle doesn't support upsert natively yet, so we keep the SELECT-first pattern
   const existing = await db
     .select()
     .from(discoveredApps)
@@ -231,7 +259,7 @@ export async function promoteCandidate(
   candidateId: string,
   options: {
     healthCheckPath?: string;
-    customUrl?: string;        // Override auto-constructed URL entirely
+    customUrl?: string;
     createdBy?: string;
   } = {}
 ) {
@@ -247,7 +275,6 @@ export async function promoteCandidate(
 
   const app = candidate[0];
 
-  // Build URL: either custom override, or auto-construct from instance
   let url: string;
   if (customUrl) {
     url = customUrl;
@@ -264,7 +291,6 @@ export async function promoteCandidate(
     url = `${inst.scheme}://${inst.host}:${inst.port}${app.contextPath}${healthCheckPath}`;
   }
 
-  // Deduplicate by URL before creating
   const existing = await db
     .select()
     .from(monitors)
@@ -272,7 +298,6 @@ export async function promoteCandidate(
     .limit(1);
 
   if (existing.length > 0) {
-    // Already monitoring this URL — just mark candidate as promoted
     await db
       .update(discoveredApps)
       .set({ isPromoted: true })
@@ -286,7 +311,7 @@ export async function promoteCandidate(
       discoveredAppId: app.id,
       name: app.name,
       url,
-      environment: 'Dev', // Could be inferred from instance if we fetched it
+      environment: 'Dev',
       createdBy,
     })
     .returning();
@@ -306,8 +331,6 @@ export async function promoteCandidate(
   return monitor;
 }
 
-// ── Events ──────────────────────────────────────────────────────────────────
-
 async function logEvent(
   type:
     | 'STATE_TRANSITION'
@@ -321,7 +344,7 @@ async function logEvent(
   try {
     await db.insert(events).values({ type, payload });
   } catch (err) {
-    // Event logging should never break the main flow
+    // event logging should never break the main flow
     console.error('[events] Failed to log event:', err);
   }
 }
