@@ -1,112 +1,133 @@
-import { sql } from 'drizzle-orm';
 import { db } from '../db';
-import { getEnabledMonitors, updateMonitorStatus } from '../data/monitors';
+import { discoveredApps, instanceHealthSnapshots, jvmSnapshots, monitors } from '../db/schema';
+import { eq, and } from 'drizzle-orm';
+import { discoverApps, fetchInstanceHealth, fetchJvmSnapshot } from './tomcatScraper';
 import { pingUrl } from './pinger';
-import type { PingResult } from './pinger';
+import { updateMonitorStatus } from '../data/monitors';
+import { getOrCreateDefaultInstance } from '../data/instances';
+import { randomUUID } from 'crypto';
 
-let isRunning = false;
-let intervalId: NodeJS.Timeout | null = null;
+let discoveryInterval: NodeJS.Timeout | null = null;
+let healthInterval: NodeJS.Timeout | null = null;
+let jvmInterval: NodeJS.Timeout | null = null;
+let monitorInterval: NodeJS.Timeout | null = null;
 
-async function waitForDbReady(maxRetries = 10, delayMs = 1000): Promise<boolean> {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      await db.execute(sql`SELECT 1`);
-      console.log('[scheduler] Database ready');
-      return true;
-    } catch {
-      console.log(`[scheduler] Database not ready, retry ${i + 1}/${maxRetries}...`);
-      await new Promise((r) => setTimeout(r, delayMs));
-    }
-  }
-  console.error('[scheduler] Database unreachable after max retries. Scheduler not started.');
-  return false;
-}
+const DISCOVERY_MS = 60000;
+const HEALTH_MS = 60000;
+const JVM_MS = 300000;
+const MONITOR_MS = 30000;
 
-export async function startScheduler(intervalMs = 30000) {
-  if (intervalId) {
-    console.log('[scheduler] Already running');
-    return;
-  }
+export function startScheduler() {
+  console.log('[scheduler] Starting all jobs...');
 
-  // Don't start ticking until we can talk to the database
-  const dbReady = await waitForDbReady();
-  if (!dbReady) return;
+  runDiscovery().catch(console.error);
+  runHealth().catch(console.error);
+  runJvm().catch(console.error);
+  runMonitors().catch(console.error);
 
-  intervalId = setInterval(async () => {
-    if (isRunning) {
-      console.log('[scheduler] Previous run still in progress, skipping...');
-      return;
-    }
+  discoveryInterval = setInterval(() => runDiscovery().catch(console.error), DISCOVERY_MS);
+  healthInterval = setInterval(() => runHealth().catch(console.error), HEALTH_MS);
+  jvmInterval = setInterval(() => runJvm().catch(console.error), JVM_MS);
+  monitorInterval = setInterval(() => runMonitors().catch(console.error), MONITOR_MS);
 
-    isRunning = true;
-    const startTime = Date.now();
-
-    try {
-      const { default: pLimit } = await import('p-limit');
-      const limit = pLimit(5);
-
-      const monitors = await getEnabledMonitors();
-      console.log(`[scheduler] Polling ${monitors.length} monitors...`);
-
-      await Promise.all(
-        monitors.map((m) =>
-          limit(async () => {
-            const now = Date.now();
-            const lastChecked = m.lastChecked ? new Date(m.lastChecked).getTime() : 0;
-            const interval = (m.checkInterval ?? 30) * 1000;
-            const isDue = now - lastChecked >= interval;
-
-            if (!isDue) {
-              return;
-            }
-
-            try {
-              const result = await pingUrl(m.url, 3000);
-              const updated = await updateMonitorStatus(m.id, result);
-              // TODO: Broadcast via WebSocket when implemented
-              // broadcast({ type: 'MONITOR_UPDATE', monitor: updated });
-            } catch (error) {
-              // Probe-side failure (not target DOWN) — mark as UNKNOWN
-              const errorMessage = error instanceof Error ? error.message : String(error);
-              console.error(`[scheduler] Probe failure for ${m.name}: ${errorMessage}`);
-
-              const probeFailureResult: PingResult = {
-                status: 'UNKNOWN',
-                checkedAt: new Date().toISOString(),
-                responseTimeMs: 0,
-                errorCategory: 'PROBE_FAILURE',
-                errorMessage: `Probe exception: ${errorMessage}`,
-              };
-
-              try {
-                await updateMonitorStatus(m.id, probeFailureResult);
-              } catch (dbError) {
-                console.error(`[scheduler] Failed to record probe failure for ${m.name}:`, dbError);
-              }
-            }
-          })
-        )
-      );
-
-      console.log(`[scheduler] Completed in ${Date.now() - startTime}ms`);
-    } catch (error) {
-      console.error('[scheduler] Fatal error:', error);
-    } finally {
-      isRunning = false;
-    }
-  }, intervalMs);
-
-  console.log(`[scheduler] Started with ${intervalMs}ms interval`);
+  console.log('[scheduler] All jobs started');
 }
 
 export function stopScheduler() {
-  if (intervalId) {
-    clearInterval(intervalId);
-    intervalId = null;
-    console.log('[scheduler] Stopped');
+  if (discoveryInterval) clearInterval(discoveryInterval);
+  if (healthInterval) clearInterval(healthInterval);
+  if (jvmInterval) clearInterval(jvmInterval);
+  if (monitorInterval) clearInterval(monitorInterval);
+  console.log('[scheduler] All jobs stopped');
+}
+
+export async function runMonitors() {
+  const allMonitors = await db.select().from(monitors);
+  for (const monitor of allMonitors) {
+    const result = await pingUrl(monitor.url, 5000);
+    await updateMonitorStatus(monitor.id, result);
   }
 }
 
-export function isSchedulerRunning() {
-  return intervalId !== null;
+async function runDiscovery() {
+  try {
+    console.log('[scheduler] Running discovery...');
+    const apps = await discoverApps();
+    const instance = await getOrCreateDefaultInstance();
+
+    for (const app of apps) {
+      const existing = await db.select().from(discoveredApps).where(
+        and(
+          eq(discoveredApps.contextPath, app.contextPath),
+          eq(discoveredApps.instanceId, instance.id)
+        )
+      );
+
+      if (existing.length === 0) {
+        await db.insert(discoveredApps).values({
+          id: randomUUID(),
+          instanceId: instance.id,
+          name: app.displayName || app.contextPath,
+          contextPath: app.contextPath,
+          tomcatState: app.state,
+          discoveredAt: new Date(),
+          lastSeenAt: new Date(),
+        });
+        console.log(`[discovery] New app: ${app.contextPath}`);
+      } else {
+        await db.update(discoveredApps)
+          .set({ lastSeenAt: new Date(), tomcatState: app.state })
+          .where(eq(discoveredApps.id, existing[0].id));
+      }
+    }
+    console.log(`[scheduler] Discovery complete: ${apps.length} apps`);
+  } catch (err) {
+    console.error('[scheduler] Discovery failed:', err);
+  }
+}
+
+async function runHealth() {
+  try {
+    console.log('[scheduler] Collecting instance health...');
+    const health = await fetchInstanceHealth();
+    const instance = await getOrCreateDefaultInstance();
+
+    for (const connector of health.connectors) {
+      await db.insert(instanceHealthSnapshots).values({
+        id: randomUUID(),
+        instanceId: instance.id,
+        connectorName: connector.name,
+        threadInfo: connector.threadInfo,
+        requestInfo: connector.requestInfo,
+        memoryInfo: health.memoryInfo,
+        rawResponse: health.raw.substring(0, 5000),
+        collectedAt: new Date(),
+      });
+    }
+    console.log(`[scheduler] Health stored: ${health.connectors.length} connectors`);
+  } catch (err) {
+    console.error('[scheduler] Health collection failed:', err);
+  }
+}
+
+async function runJvm() {
+  try {
+    console.log('[scheduler] Collecting JVM snapshot...');
+    const snapshot = await fetchJvmSnapshot();
+    const instance = await getOrCreateDefaultInstance();
+
+    await db.insert(jvmSnapshots).values({
+      id: randomUUID(),
+      instanceId: instance.id,
+      runtimeInfo: snapshot.runtimeInfo,
+      memoryPools: snapshot.memoryPools,
+      gcInfo: snapshot.gcInfo,
+      osInfo: snapshot.osInfo,
+      rawResponse: snapshot.raw.substring(0, 5000),
+      collectedAt: new Date(),
+    });
+    console.log('[scheduler] JVM snapshot stored');
+  } catch (err) {
+    console.error('[scheduler] JVM collection failed:', err);
+  }
 }
