@@ -1,32 +1,18 @@
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { Pool } from 'pg';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import Database from 'better-sqlite3';
 import * as schema from './schema';
 
-export let db: any;
+const dbPath = process.env.DATABASE_URL?.replace('sqlite://', '') || './data/uptime.db';
 
-if (process.env.DATABASE_URL) {
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
-  });
-
-  pool.on('error', (err) => {
-    console.error('[db] Unexpected pool error:', err);
-  });
-
-  db = drizzle(pool, { schema });
-} else {
-  console.warn('[db] WARNING: DATABASE_URL environment variable is not defined. Database operations will be unavailable.');
-  db = new Proxy({}, {
-    get(target, prop) {
-      if (prop === 'then') return undefined;
-      return () => {
-        throw new Error('Database is not configured. Please set DATABASE_URL in your environment.');
-      };
-    }
-  });
+import fs from 'fs';
+import path from 'path';
+const dir = path.dirname(dbPath);
+if (!fs.existsSync(dir)) {
+  fs.mkdirSync(dir, { recursive: true });
 }
 
+const sqlite = new Database(dbPath);
+sqlite.pragma('journal_mode = WAL');
+
+export const db = drizzle(sqlite, { schema });
 export * from './schema';
