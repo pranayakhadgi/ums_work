@@ -1,4 +1,4 @@
-import fetch from 'node-fetch';
+// backend/src/services/pinger.ts
 import http from 'http';
 import https from 'https';
 
@@ -18,14 +18,14 @@ const httpsAgent = new https.Agent({
 });
 
 export interface PingResult {
-  status: 'UP' | 'DOWN'| 'UNKNOWN';
+  status: 'UP' | 'DOWN' | 'UNKNOWN';
   checkedAt: string;
   responseTimeMs: number;
   errorCategory?: 'TIMEOUT' | 'REFUSED' | 'DNS_FAILURE' | 'CERT_EXPIRED' | 'PROBE_FAILURE' | 'UNKNOWN';
   errorMessage?: string;
 }
 
-export async function pingUrl(url: string, timeoutMs = 3000): Promise<PingResult> {
+export async function pingUrl(url: string, timeoutMs = 5000): Promise<PingResult> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const agent = url.startsWith('https:') ? httpsAgent : httpAgent;
@@ -36,7 +36,8 @@ export async function pingUrl(url: string, timeoutMs = 3000): Promise<PingResult
     const response = await fetch(url, {
       method: 'GET',
       signal: controller.signal,
-      agent,
+      // @ts-ignore — Node 18+ fetch
+      dispatcher: agent,
     });
 
     clearTimeout(timeoutId);
