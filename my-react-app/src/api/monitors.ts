@@ -37,7 +37,7 @@ export async function addMonitorsBulk(items: { name: string; url: string }[]): P
 }
 
 export async function discoverMonitors(): Promise<Monitor[]> {
-  const res = await fetch('/api/discover', { method: 'POST'});
+  const res = await fetch('/api/discovery', { method: 'POST'});
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' }));
     throw new Error(err.error || err.message || 'Failed to discover monitors');
