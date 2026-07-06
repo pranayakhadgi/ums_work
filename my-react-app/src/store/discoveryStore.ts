@@ -1,0 +1,47 @@
+import { create } from 'zustand';
+import { fetchDiscoveryCandidates, promoteToMonitor } from '../api/health';
+
+export interface DiscoveredApp {
+  id: string;
+  instanceId: string;
+  name: string;
+  contextPath: string;
+  tomcatState: string;
+  discoveredAt: string;
+  lastSeenAt: string;
+  isPromoted: boolean;
+}
+
+interface DiscoveryStore {
+  candidates: DiscoveredApp[];
+  loading: boolean;
+  error: string | null;
+  loadCandidates: () => Promise<void>;
+  promote: (app: DiscoveredApp) => Promise<void>;
+}
+
+export const useDiscoveryStore = create<DiscoveryStore>((set, get) => ({
+  candidates: [],
+  loading: false,
+  error: null,
+
+  loadCandidates: async () => {
+    set({ loading: true, error: null });
+    try {
+      const res = await fetchDiscoveryCandidates();
+      set({ candidates: res.data ?? [], loading: false });
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : 'an unknown error occurred', loading: false });
+    }
+  },
+
+  promote: async (app: DiscoveredApp) => {
+    set({ loading: true, error: null });
+    try {
+      await promoteToMonitor(app);
+      await get().loadCandidates();
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : 'an unknown error occurred', loading: false });
+    }
+  },
+}));
