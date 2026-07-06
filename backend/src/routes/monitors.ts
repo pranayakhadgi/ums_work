@@ -15,13 +15,15 @@ import { inferEnvironment } from '../utils/environment';
 
 const router = Router();
 
-// ── Validation Schemas ────────────────────────────────────────────────────────
-
 const createMonitorSchema = z.object({
   name: z.string().min(1, 'Name is required'),
-  url: z.string().url('Must be a valid URL').startsWith('http', 'URL must start with http:// or https://'),
+  url: z.string().url('Must be a valid URL').startsWith('http', 'URL must start with http:// or https://').optional(),
   environment: z.enum(['Dev', 'QA', 'Prod']).optional(),
-});
+  discoveredAppId: z.string().uuid().optional(),
+}).refine(
+  (data) => data.url || data.discoveredAppId,
+  { message: 'either url or discoveredAppId is required' }
+);
 
 const bulkItemSchema = z.object({
   name: z.string().min(1),
@@ -31,8 +33,6 @@ const bulkItemSchema = z.object({
 const enableSchema = z.object({
   enabled: z.boolean(),
 });
-
-// ── Routes ──────────────────────────────────────────────────────────────────
 
 // GET /api/monitors
 router.get('/', async (req, res) => {
@@ -90,11 +90,12 @@ router.post('/', async (req, res) => {
       });
     }
 
-    const { name, url, environment } = parsed.data;
+    const { name, url, environment, discoveredAppId } = parsed.data;
     const monitor = await createMonitor({
       name,
       url,
-      environment: environment ?? inferEnvironment(url),
+      environment: environment ?? (url ? inferEnvironment(url) : 'Dev'),
+      discoveredAppId,
     });
 
     res.status(201).json(monitor);
@@ -112,7 +113,6 @@ router.post('/bulk', async (req, res) => {
       return res.status(400).json({ error: 'monitors array is required' });
     }
 
-    // Validate all items first
     const validationResults = items.map((item, index) => ({
       index,
       parsed: bulkItemSchema.safeParse(item),
@@ -136,7 +136,6 @@ router.post('/bulk', async (req, res) => {
       .filter((r) => r.parsed.success)
       .map((r) => r.parsed.data!);
 
-    // Parallel ping with bounded concurrency
     const { default: pLimit } = await import('p-limit');
     const limit = pLimit(5);
 
