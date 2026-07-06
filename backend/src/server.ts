@@ -26,11 +26,20 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
+const skipForMonitoring = (req) => {
+  const path = req.path;
+  return path.startsWith('/api/monitors') || 
+         path.startsWith('/api/health') || 
+         path.startsWith('/api/jvm') ||
+         path.startsWith('/api/discovery');
+};
+
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
+   message: { error: 'Too many requests, please slow down' }
 });
 app.use('/api/', limiter);
 

@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { db } from '../db';
 import { discoveredApps } from '../db/schema';
 import { eq, desc, and } from 'drizzle-orm';
-import { discoverApps } from '../services/tomcatScraper';
+import { discoverApps, fetchInstanceHealth, fetchJvmSnapshot } from '../services/tomcatScraper';
 import { randomUUID } from 'crypto';
 import { getOrCreateDefaultInstance } from '../data/instances';
 
@@ -67,6 +67,32 @@ router.get('/candidates', async (req, res) => {
   } catch (error) {
     console.error('[discovery] GET /candidates error:', error);
     res.status(500).json({ error: 'Failed to fetch candidates' });
+  }
+});
+
+// GET /api/discovery/debug — raw scraper output, no DB write
+router.get('/debug', async (req, res) => {
+  try {
+    const [apps, health, jvm] = await Promise.all([
+      discoverApps(),
+      fetchInstanceHealth(),
+      fetchJvmSnapshot(),
+    ]);
+    res.json({
+      success: true,
+      appCount: apps.length,
+      apps: apps.slice(0, 10),
+      healthConnectors: health.connectors.length,
+      memoryInfo: health.memoryInfo,
+      jvmRuntime: jvm.runtimeInfo,
+      jvmOs: jvm.osInfo,
+      jvmPoolCount: jvm.memoryPools?.length,
+      jvmPools: jvm.memoryPools,
+      jvmGcCount: jvm.gcInfo?.length,
+      jvmGc: jvm.gcInfo,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message, stack: error.stack });
   }
 });
 

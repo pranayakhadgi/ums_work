@@ -1,84 +1,201 @@
 import { useState, useEffect } from 'react';
 import { fetchLatestJvm } from '../api/health';
 
+interface JvmSnapshot {
+  id: string;
+  collectedAt: string;
+  runtimeInfo?: {
+    vmName?: string;
+    vmVersion?: string;
+    vmVendor?: string;
+    uptime?: number;
+  } | null;
+  memoryPools?: Array<{
+    name: string;
+    type: string;
+    used: number;
+    committed: number;
+    max: number;
+  }> | null;
+  gcInfo?: Array<{
+    name: string;
+    collectionCount: number;
+    collectionTime: number;
+  }> | null;
+  osInfo?: {
+    osName?: string;
+    osVersion?: string;
+    architecture?: string;
+    availableProcessors?: number;
+    systemLoadAverage?: number;
+  } | null;
+}
+
 export default function JvmMetrics() {
-    const [snapshots, setSnapshots] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
+  const [snapshots, setSnapshots] = useState<JvmSnapshot[]>([]);
+  const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        const load = async () => {
-            const res = await fetchLatestJvm();
-            if (res.success) setSnapshots(res.data);
-            setLoading(false);
-        };
-        load();
-        const interval = setInterval(load, 30000);
-        return () => clearInterval(interval);
-    }, []);
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetchLatestJvm();
+        if (res.success && Array.isArray(res.data)) {
+          setSnapshots(res.data);
+        }
+      } catch (e) {
+        console.error('[JvmMetrics] Failed:', e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+    const interval = setInterval(load, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
-    if (loading) return <div className="p-4">Loading JVM data...</div>;
-
-    const latest = snapshots[0];
-    if (!latest) return <div className="p-4">No JVM data available.</div>;
-
-    const totalUsed = latest.memoryPools?.reduce((sum: number, p: any) => sum + (p.used || 0), 0) || 0;
-    const totalMax = latest.memoryPools?.reduce((sum: number, p: any) => sum + (p.max > 0 ? p.max : 0), 0) || 1;
-
-    return (
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-            <h2 className="text-xl font-bold text-gray-800 mb-4">JVM Diagnostics</h2>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                <div className="border rounded p-4">
-                    <p className="text-gray-500 text-sm">JVM Version</p>
-                    <p className="font-mono text-lg">{latest.runtimeInfo?.vmVersion}</p>
-                    <p className="text-xs text-gray-400">{latest.runtimeInfo?.vmName}</p>
-                </div>
-                <div className="border rounded p-4">
-                    <p className="text-gray-500 text-sm">Uptime</p>
-                    <p className="font-mono text-lg">
-                        {Math.floor((latest.runtimeInfo?.uptime || 0) / 3600000)}h {' '}
-                        {Math.floor(((latest.runtimeInfo?.uptime || 0) % 3600000) / 60000)}m
-                    </p>
-                </div>
-                <div className="border rounded p-4">
-                    <p className="text-gray-500 text-sm">OS Load</p>
-                    <p className="font-mono text-lg">{latest.osInfo?.systemLoadAverage}</p>
-                    <p className="text-xs text-gray-400">{latest.osInfo?.osName} ({latest.osInfo?.availableProcessors} cores)</p>
-                </div>
-            </div>
-
-            <h3 className="font-semibold mb-2">Memory Pools</h3>
-            <div className="space-y-3">
-                {latest.memoryPools?.map((pool: any) => {
-                    const pct = pool.max > 0 ? (pool.used / pool.max) * 100 : 0;
-                    return (
-                        <div key={pool.name}>
-                            <div className="flex justify-between text-sm mb-1">
-                                <span>{pool.name} <span className="text-gray-400">({pool.type})</span></span>
-                                <span className="font-mono">{(pool.used / 1024 / 1024).toFixed(1)} / {(pool.max / 1024 / 1024).toFixed(1)} MB</span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded h-2">
-                                <div
-                                    className={`h-2 rounded ${pct > 80 ? 'bg-red-500' : pct > 50 ? 'bg-yellow-500' : 'bg-green-500'}`}
-                                    style={{ width: `${Math.min(pct, 100)}%` }}
-                                />
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-
-            <h3 className="font-semibold mt-4 mb-2">Garbage Collectors</h3>
-            <div className="grid grid-cols-2 gap-4">
-                {latest.gcInfo?.map((gc: any) => (
-                    <div key={gc.name} className="border rounded p-3 text-sm">
-                        <p className="font-medium">{gc.name}</p>
-                        <p className="text-gray-500">Collections: {gc.collectionCount}</p>
-                        <p className="text-gray-500">Time: {gc.collectionTime}ms</p>
-                    </div>
-                ))}
-            </div>
+  if (loading) return (
+    <section className="dash-section">
+      <div className="section-header">
+        <div className="section-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/>
+          </svg>
+          JVM Diagnostics
         </div>
-    );
+      </div>
+      <div className="skeleton-grid">
+        {[1, 2, 3].map(i => <div key={i} className="skeleton-card" />)}
+      </div>
+    </section>
+  );
+
+  const latest = snapshots[0];
+  if (!latest) return (
+    <section className="dash-section">
+      <div className="section-header">
+        <div className="section-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/>
+          </svg>
+          JVM Diagnostics
+        </div>
+      </div>
+      <div className="empty-section">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/>
+        </svg>
+        <p>No JVM data available.</p>
+      </div>
+    </section>
+  );
+
+  const memPools = latest.memoryPools ?? [];
+  const gcCollectors = latest.gcInfo ?? [];
+
+  const fmtMem = (bytes: number) => {
+    if (!bytes || bytes === 0) return '0.0';
+    return (bytes / 1024 / 1024).toFixed(1);
+  };
+
+  return (
+    <section className="dash-section">
+      <div className="section-header">
+        <div className="section-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/>
+          </svg>
+          JVM Diagnostics
+        </div>
+      </div>
+
+      {/* Top Metric Cards */}
+      <div className="jvm-bento">
+        <div className="jvm-metric-card">
+          <div className="jvm-metric-label">JVM Version</div>
+          <div className="jvm-metric-value">{latest.runtimeInfo?.vmVersion ?? '—'}</div>
+          <div className="jvm-metric-sub">{latest.runtimeInfo?.vmName ?? '—'}</div>
+        </div>
+        <div className="jvm-metric-card">
+          <div className="jvm-metric-label">Uptime</div>
+          <div className="jvm-metric-value">
+            {Math.floor((latest.runtimeInfo?.uptime || 0) / 3600000)}h{' '}
+            {Math.floor(((latest.runtimeInfo?.uptime || 0) % 3600000) / 60000)}m
+          </div>
+          <div className="jvm-metric-sub">Since last restart</div>
+        </div>
+        <div className="jvm-metric-card">
+          <div className="jvm-metric-label">OS Load</div>
+          <div className="jvm-metric-value">{latest.osInfo?.systemLoadAverage ?? 0}</div>
+          <div className="jvm-metric-sub">
+            {latest.osInfo?.osName ?? '—'} · {latest.osInfo?.availableProcessors ?? 0} cores
+          </div>
+        </div>
+      </div>
+
+      {/* FIXED: Memory Pools as Cards */}
+      {memPools.length > 0 && (
+        <div className="memory-section">
+          <div className="section-header" style={{ marginBottom: '16px' }}>
+            <div className="section-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2">
+                <rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/>
+              </svg>
+              Memory Pools
+            </div>
+          </div>
+          <div className="memory-pools-grid">
+            {memPools.map((pool, idx) => {
+              const used = pool.used || 0;
+              const max = pool.max === -1 ? Infinity : (pool.max || 1);
+              const pct = Math.min((used / max) * 100, 100);
+              return (
+                <div key={idx} className="memory-pool-card">
+                  <div className="pool-header">
+                    <span className="pool-name">{pool.name}</span>
+                    <span className="pool-type">{pool.type}</span>
+                  </div>
+                  <div className="pool-bar-bg">
+                    <div className="pool-bar-fill" style={{ width: `${pct}%` }} />
+                  </div>
+                  <div className="pool-stats">
+                    <span className="pool-stat">{fmtMem(used)} MB</span>
+                    <span className="pool-stat">/ {pool.max === -1 ? '∞' : fmtMem(pool.max)} MB</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* FIXED: Garbage Collectors Grid */}
+      {gcCollectors.length > 0 && (
+        <div className="memory-section">
+          <div className="section-header" style={{ marginBottom: '16px' }}>
+            <div className="section-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"/><path d="M8 12h8"/>
+              </svg>
+              Garbage Collectors
+            </div>
+          </div>
+          <div className="gc-grid">
+            {gcCollectors.map((gc, idx) => (
+              <div key={idx} className="gc-card">
+                <div className="gc-header">{gc.name}</div>
+                <div className="pool-stats">
+                  <span className="pool-stat">Collections</span>
+                  <span className="pool-stat">{gc.collectionCount.toLocaleString()}</span>
+                </div>
+                <div className="pool-stats">
+                  <span className="pool-stat">Total time</span>
+                  <span className="pool-stat">{gc.collectionTime.toLocaleString()}ms</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }

@@ -1,4 +1,4 @@
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, sql } from 'drizzle-orm';
 import { db } from '../db';
 import {
   monitors,
@@ -11,8 +11,53 @@ import {
 import type { PingResult } from '../services/pinger';
 
 export async function getAllMonitors() {
-  return db.select().from(monitors).orderBy(desc(monitors.createdAt));
+  const allMonitors = await db.select().from(monitors).orderBy(desc(monitors.createdAt));
+  if (allMonitors.length === 0) return [];
+
+  const now = Date.now();
+  const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
+  const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+
+  // Fetch all recent check results in one query, then filter in JS
+  const allChecks = await db
+    .select()
+    .from(checkResults)
+    .orderBy(desc(checkResults.checkedAt));
+
+  // Group by monitor
+  const checksByMonitor = new Map<string, typeof allChecks>();
+  for (const check of allChecks) {
+    const list = checksByMonitor.get(check.monitorId) ?? [];
+    list.push(check);
+    checksByMonitor.set(check.monitorId, list);
+  }
+
+  return allMonitors.map((monitor) => {
+    const checks = checksByMonitor.get(monitor.id) ?? [];
+    const latest = checks[0];
+
+    const sevenDayChecks = checks.filter(
+      (c) => new Date(c.checkedAt).getTime() >= sevenDaysAgo
+    );
+    const sevenTotal = sevenDayChecks.length;
+    const sevenUp = sevenDayChecks.filter((c) => c.status === 'UP').length;
+
+    const thirtyDayChecks = checks.filter(
+      (c) => new Date(c.checkedAt).getTime() >= thirtyDaysAgo
+    );
+    const thirtyTotal = thirtyDayChecks.length;
+    const thirtyUp = thirtyDayChecks.filter((c) => c.status === 'UP').length;
+
+    return {
+      ...monitor,
+      uptime7days: sevenTotal > 0 ? Math.round((sevenUp / sevenTotal) * 1000) / 10 : 0,
+      uptime30days: thirtyTotal > 0 ? Math.round((thirtyUp / thirtyTotal) * 1000) / 10 : 0,
+      errorCategory: latest?.errorCategory ?? undefined,
+      errorMessage: latest?.errorMessage ?? undefined,
+    };
+  });
 }
+
 
 export async function getMonitorById(id: string) {
   const results = await db

@@ -3,6 +3,7 @@ dist/
 .env
 PROJECT_CONTEXT.md
 scraper.py
+scrape.py
 *.db
 *.db-shm
 *.db-wal

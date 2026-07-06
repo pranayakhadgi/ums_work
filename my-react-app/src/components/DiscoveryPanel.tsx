@@ -1,103 +1,124 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useDiscoveryStore, type DiscoveredApp } from '../store/discoveryStore';
-import { ScanLine, Plus, Server, RefreshCw } from 'lucide-react';
-
 
 export default function DiscoveryPanel() {
-    const candidates = useDiscoveryStore((s) => s.candidates);
-    const loading = useDiscoveryStore((s) => s.loading);
-    const loadCandidates = useDiscoveryStore((s) => s.loadCandidates);
-    const promote = useDiscoveryStore((s) => s.promote);
+  const candidates = useDiscoveryStore((s) => s.candidates);
+  const loading = useDiscoveryStore((s) => s.loading);
+  const error = useDiscoveryStore((s) => s.error);
+  const loadCandidates = useDiscoveryStore((s) => s.loadCandidates);
+  const promote = useDiscoveryStore((s) => s.promote);
+  const [scanning, setScanning] = useState(false);
 
-    useEffect(() => { loadCandidates(); }, []);
+  useEffect(() => { loadCandidates(); }, []);
 
-    const handlePromote = async (app: DiscoveredApp) => {
-        await promote(app);
-    };
+  const handleScan = async () => {
+    setScanning(true);
+    try {
+      const res = await fetch('/api/discovery', { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Scan failed' }));
+        console.error('[DiscoveryPanel] Scan failed:', err);
+      }
+    } catch (e) {
+      console.error('[DiscoveryPanel] Scan error:', e);
+    } finally {
+      await loadCandidates();
+      setScanning(false);
+    }
+  };
 
-    const unpromoted = candidates.filter(c => !c.isPromoted);
+  const handlePromote = async (app: DiscoveredApp) => {
+    await promote(app);
+  };
 
-    return (
-        <div className="bg-gray-800/30 border border-gray-700 rounded-xl p-5">
-            <div className="flex justify-between items-center mb-4">
-                <div>
-                    <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                        <ScanLine size={18} className="text-blue-400" />
-                        Discovered Applications
-                    </h2>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                        From Tomcat Manager /synctl/text/list
-                    </p>
-                </div>
-                <button
-                    onClick={loadCandidates}
-                    disabled={loading}
-                    className="btn btn-primary"
-                >
-                    {loading ? (
-                        <>
-                            <RefreshCw size={14} className="spinning" />
-                            Scanning...
-                        </>
-                    ) : (
-                        <>
-                            <ScanLine size={14} />
-                            Scan Tomcat
-                        </>
-                    )}
-                </button>
-            </div>
+  const isLoading = loading || scanning;
 
-            {unpromoted.length === 0 ? (
-                <div className="text-center py-8 border border-dashed border-gray-700 rounded-lg">
-                    <Server size={24} className="mx-auto text-gray-600 mb-2" />
-                    <p className="text-gray-500 text-sm">No new applications found. Click Scan to discover.</p>
-                </div>
-            ) : (
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                        <thead>
-                            <tr className="border-b border-gray-700 text-xs uppercase tracking-wider text-gray-500">
-                                <th className="py-2.5 pr-4">Context Path</th>
-                                <th className="py-2.5 pr-4">State</th>
-                                <th className="py-2.5 pr-4">Name</th>
-                                <th className="py-2.5 pr-4">Discovered</th>
-                                <th className="py-2.5"></th>
-                            </tr>
-                        </thead>
-                        <tbody className="text-sm">
-                            {unpromoted.map((app) => (
-                                <tr key={app.id} className="border-b border-gray-800 hover:bg-gray-800/50 transition-colors">
-                                    <td className="py-3 pr-4 font-mono text-blue-400">{app.contextPath}</td>
-                                    <td className="py-3 pr-4">
-                                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${app.tomcatState === 'running'
-                                                ? 'bg-emerald-500/10 text-emerald-400'
-                                                : 'bg-red-500/10 text-red-400'
-                                            }`}>
-                                            <span className={`w-1.5 h-1.5 rounded-full ${app.tomcatState === 'running' ? 'bg-emerald-400' : 'bg-red-400'
-                                                }`} />
-                                            {app.tomcatState}
-                                        </span>
-                                    </td>
-                                    <td className="py-3 pr-4 text-gray-300">{app.name}</td>
-                                    <td className="py-3 pr-4 text-gray-500 text-xs">
-                                        {new Date(app.discoveredAt).toLocaleDateString()}
-                                    </td>
-                                    <td className="py-3 text-right">
-                                        <button
-                                            onClick={() => handlePromote(app)}
-                                            className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                                        >
-                                            <Plus size={12} />
-                                            Monitor
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            )}
+  return (
+    <section className="dash-section">
+      <div className="section-header">
+        <div className="section-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+          Discovered Applications
         </div>
-    );
+        <div className="section-actions">
+          <div className="section-count">{candidates.length}</div>
+          <button 
+            className="btn-scan"
+            onClick={handleScan}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="spinning">
+                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/>
+                </svg>
+                Scanning...
+              </>
+            ) : (
+              <>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 21h5v-5"/>
+                </svg>
+                Scan
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="error-banner">
+          {error}
+        </div>
+      )}
+
+      {candidates.length === 0 ? (
+        <div className="empty-section">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+          <p>No applications found. Click Scan to discover from Tomcat.</p>
+        </div>
+      ) : (
+        <div className="discovery-grid">
+          {candidates.map((app, i) => (
+            <div 
+              key={app.id} 
+              className={`discovery-card ${app.isPromoted ? 'promoted' : ''}`}
+              style={{ animationDelay: `${i * 0.05}s` }}
+            >
+              <div className="discovery-path">{app.contextPath}</div>
+              <div className="discovery-name">{app.name}</div>
+              <div className="discovery-meta">
+                <div className={`discovery-state ${app.tomcatState}`}>
+                  <div className={`state-dot ${app.tomcatState}`} />
+                  {app.tomcatState}
+                </div>
+                {app.isPromoted ? (
+                  <span className="btn-action promoted">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                      <polyline points="20 6 9 17 4 12"/>
+                    </svg>
+                    Monitored
+                  </span>
+                ) : (
+                  <button 
+                    className="btn-action"
+                    onClick={() => handlePromote(app)}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                      <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                    </svg>
+                    Monitor
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }

@@ -218,10 +218,28 @@ export function parseVminfo(raw: string): JvmSnapshot {
         const trimmed = line.trim();
         if (!trimmed) continue;
 
-        if (trimmed.includes('Runtime information')) section = 'runtime';
-        else if (trimmed.includes('OS information')) section = 'os';
-        else if (trimmed.includes('Memory Pool')) section = 'memory';
-        else if (trimmed.includes('Garbage Collector')) section = 'gc';
+        // Section detection — must come before key:value parsing
+        if (trimmed === 'Runtime information:') { section = 'runtime'; continue; }
+        if (trimmed === 'OS information:') { section = 'os'; continue; }
+        if (trimmed.startsWith('Memory Pool Name:')) { 
+            section = 'memory'; 
+            // Flush previous pool
+            if (currentPool) result.memoryPools.push(currentPool);
+            currentPool = { 
+                name: trimmed.substring('Memory Pool Name:'.length).trim(), 
+                type: '', used: 0, committed: 0, max: 0 
+            };
+            continue;
+        }
+        if (trimmed.startsWith('Garbage Collector Name:')) {
+            section = 'gc';
+            result.gcInfo.push({ 
+                name: trimmed.substring('Garbage Collector Name:'.length).trim(), 
+                collectionCount: 0, 
+                collectionTime: 0 
+            });
+            continue;
+        }
 
         const colonIdx = trimmed.indexOf(':');
         if (colonIdx === -1) continue;
@@ -238,23 +256,19 @@ export function parseVminfo(raw: string): JvmSnapshot {
             if (key === 'osname') result.osInfo.osName = value;
             else if (key === 'osversion') result.osInfo.osVersion = value;
             else if (key === 'architecture') result.osInfo.architecture = value;
-            else if (key === 'available processors') result.osInfo.availableProcessors = parseInt(value, 10);
-            else if (key === 'system load average') result.osInfo.systemLoadAverage = parseFloat(value);
+            else if (key === 'availableprocessors') result.osInfo.availableProcessors = parseInt(value, 10);
+            else if (key === 'systemloadaverage') result.osInfo.systemLoadAverage = parseFloat(value);
         }
-        else if (section === 'memory') {
-            if (key === 'name') {
-                if (currentPool) result.memoryPools.push(currentPool);
-                currentPool = { name: value, type: '', used: 0, committed: 0, max: 0 };
-            }
-            else if (key === 'type' && currentPool) currentPool.type = value;
-            else if (key === 'used' && currentPool) currentPool.used = parseMemory(value);
-            else if (key === 'committed' && currentPool) currentPool.committed = parseMemory(value);
-            else if (key === 'max' && currentPool) currentPool.max = parseMemory(value);
+        else if (section === 'memory' && currentPool) {
+            if (key === 'type') currentPool.type = value;
+            else if (key === 'used') currentPool.used = parseMemory(value);
+            else if (key === 'committed') currentPool.committed = parseMemory(value);
+            else if (key === 'max') currentPool.max = parseMemory(value);
         }
-        else if (section === 'gc') {
-            if (key === 'name') result.gcInfo.push({ name: value, collectionCount: 0, collectionTime: 0 });
-            else if (key === 'collection count' && result.gcInfo.length) result.gcInfo[result.gcInfo.length - 1].collectionCount = parseInt(value, 10);
-            else if (key === 'collection time' && result.gcInfo.length) result.gcInfo[result.gcInfo.length - 1].collectionTime = parseInt(value, 10);
+        else if (section === 'gc' && result.gcInfo.length > 0) {
+            const currentGc = result.gcInfo[result.gcInfo.length - 1];
+            if (key === 'collectioncount') currentGc.collectionCount = parseInt(value, 10);
+            else if (key === 'collectiontime') currentGc.collectionTime = parseInt(value, 10);
         }
     }
 
