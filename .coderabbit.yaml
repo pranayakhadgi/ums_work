@@ -1,0 +1,138 @@
+language: "en-US"
+
+reviews:
+  profile: "assertive"              
+  request_changes_workflow: true     
+  high_level_summary: true
+  poem: false                        
+  review_status: true
+  review_details: true
+
+  auto_review:
+    enabled: true
+    drafts: false                    
+    base_branches: ["main", "develop"]
+
+  # MODULE-SPECIFIC REVIEW INSTRUCTIONS
+  
+  path_instructions:
+
+    # SCHEDULER 
+    - path: "backend/src/services/scheduler.ts"
+      instructions: |
+        When reviewing the scheduler:
+        - CRITICAL: Check for interval overlap bugs (setInterval vs setTimeout pattern)
+        - Verify error handling doesn't crash the scheduler loop
+        - Look for missing concurrency limits on batch operations
+        - Ensure cleanup on process shutdown (stopScheduler)
+        - Check that disabled monitors are properly skipped
+        - Flag any unbounded growth in interval queues
+
+    # PINGER 
+    - path: "backend/src/services/pinger.ts"
+      instructions: |
+        When reviewing the pinger:
+        - Verify timeout handling (AbortController usage)
+        - Check agent pooling configuration (keepAlive, maxSockets, maxFreeSockets)
+        - Ensure error categorization covers all failure modes
+        - Look for memory leaks in agent connections
+        - Verify TLS certificate validation settings (rejectUnauthorized)
+        - Flag hardcoded timeout values that should be configurable
+
+    # TOMCAT SCRAPER 
+    - path: "backend/src/services/tomcatScraper.ts"
+      instructions: |
+        When reviewing the Tomcat scraper:
+        - Flag regex patterns that might break on Tomcat version changes
+        - Check test file fallback logic (USE_TEST_FILE) for completeness
+        - Verify Basic Auth is properly base64-encoded
+        - Look for missing response validation before parsing
+        - Ensure memory unit parsing (KB/MB/GB) handles edge cases (-1, Infinity)
+        - Flag any hardcoded paths that should be configurable
+
+    # API ROUTES 
+    - path: "backend/src/routes/**"
+      instructions: |
+        When reviewing Express routes:
+        - Flag any missing input validation (Zod schemas preferred)
+        - Check for SQL injection risks in Drizzle queries
+        - Ensure error responses don't leak stack traces in production
+        - Verify rate limiting is applied to mutation endpoints
+        - Look for missing auth middleware (this app has placeholder auth)
+        - Check for proper HTTP status codes (201 for create, 404 for not found)
+
+    # DATABASE  
+    - path: "backend/src/db/**"
+      instructions: |
+        When reviewing database code:
+        - Verify foreign key constraints match business logic
+        - Check index usage on query columns (monitor_id, checked_at, instance_id)
+        - Flag any schema changes without corresponding migration files
+        - Ensure JSON columns have type safety where possible
+        - Review default values for correctness
+        - Check for N+1 query patterns in data layer
+
+    # DATA ACCESS 
+    - path: "backend/src/data/**"
+      instructions: |
+        When reviewing data access code:
+        - Check for N+1 query patterns
+        - Verify transaction boundaries for multi-table operations
+        - Look for missing error handling on database operations
+        - Ensure pagination on unbounded queries (check_results history)
+        - Flag raw SQL that bypasses Drizzle ORM
+
+    # FRONTEND STORES 
+    - path: "my-react-app/src/store/**"
+      instructions: |
+        When reviewing Zustand stores:
+        - Check for missing error state resets between operations
+        - Verify loading states don't cause race conditions
+        - Look for memory leaks from unsubscribed intervals
+        - Ensure store updates are atomic (no partial state)
+        - Flag direct store mutations (should use set())
+        - Check for proper TypeScript typing
+
+    # REACT COMPONENTS 
+    - path: "my-react-app/src/components/**"
+      instructions: |
+        When reviewing React components:
+        - Check for missing useMemo/useCallback on expensive computations
+        - Verify effect cleanup (return function in useEffect)
+        - Look for prop drilling that could be replaced with context/store
+        - Ensure canvas elements handle resize and DPR correctly
+        - FLAG simulated data that should be real (HeartbeatChart)
+        - Check accessibility (aria labels, keyboard navigation)
+        - Verify responsive design breakpoints
+
+    # TESTS 
+    - path: "backend/src/**/*.test.ts"
+      instructions: |
+        When reviewing tests:
+        - Verify each test has a clear assertion (not just "doesn't throw")
+        - Check for proper test isolation (fresh DB per test)
+        - Look for mocked dependencies that should be real integration tests
+        - Ensure edge cases are covered (empty arrays, null values, timeouts)
+        - Flag tests that test implementation details instead of behavior
+        - Verify test data doesn't depend on external state
+
+  # PATH FILTERS 
+  path_filters:
+    - "backend/src/**"
+    - "my-react-app/src/**"
+    - "!**/node_modules/**"
+    - "!**/dist/**"
+    - "!**/drizzle/**"          
+    - "!**/test-data/**"         
+    - "!**/*.css"                
+    - "!**/*.config.*"           
+    - "!**/package*.json"        
+
+chat:
+  auto_reply: true               
+
+tools:
+  eslint:
+    enabled: true
+  typescript:
+    enabled: true
