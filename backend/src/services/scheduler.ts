@@ -15,7 +15,7 @@ let monitorInterval: NodeJS.Timeout | null = null;
 const DISCOVERY_MS = 60000;
 const HEALTH_MS = 60000;
 const JVM_MS = 300000;
-const MONITOR_MS = 30000;
+const MONITOR_MS = 30000;// will add jitter during prod. 
 
 export function startScheduler() {
   console.log('[scheduler] Starting all jobs...');
@@ -41,11 +41,14 @@ export function stopScheduler() {
   console.log('[scheduler] All jobs stopped');
 }
 
+/**note:- node.js won't skip the job if it takes longer than the interval.
+ * works well with monitoring around 20 computers
+ */
 export async function runMonitors() {
   const allMonitors = await db.select().from(monitors);
-  for (const monitor of allMonitors) {
+  for (const monitor of allMonitors) {//one monitor cannot start until the previous one is done
     const result = await pingUrl(monitor.url, 5000);
-    await updateMonitorStatus(monitor.id, result);
+    await updateMonitorStatus(monitor.id, result);// o(N*5) <-- worst case
   }
 }
 
