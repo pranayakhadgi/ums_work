@@ -9,8 +9,14 @@ process.env.TOMCAT_SCHEME = process.env.TOMCAT_SCHEME || 'http';
 process.env.TOMCAT_HOST = process.env.TOMCAT_HOST || 'localhost';
 process.env.TOMCAT_PORT = process.env.TOMCAT_PORT || '8080';
 
+console.log('ENV CHECK:', {
+  TOMCAT_HOST: process.env.TOMCAT_HOST,
+  TOMCAT_PORT: process.env.TOMCAT_PORT,
+  TOMCAT_PROTOCOL: process.env.TOMCAT_PROTOCOL,
+});
+
 // NOW import everything else
-import express from 'express';
+import express, { Request } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -26,7 +32,7 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-const skipForMonitoring = (req) => {
+const skipForMonitoring = (req: Request) => {
   const path = req.path;
   return path.startsWith('/api/monitors') || 
          path.startsWith('/api/health') || 
