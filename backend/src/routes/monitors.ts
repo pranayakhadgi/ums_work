@@ -12,6 +12,9 @@ import {
 } from '../data/monitors';
 import { pingUrl } from '../services/pinger';
 import { inferEnvironment } from '../utils/environment';
+import { checkResults } from '../db/schema';
+import { db } from '../db';
+import { desc } from 'drizzle-orm';
 
 const router = Router();
 
@@ -67,6 +70,54 @@ router.get('/:id/history', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch history' });
   }
 });
+
+// GET /api/monitors/aggregate/health - last N checks across all monitors
+router.get('/aggregate/health', async (req, res) => {
+  try{
+  const limit = parseInt(req.query.limit as string) || 60;
+  const safelimit = Math.min(limit, 200); //sets the boundary for the aggregate
+
+  const checks = await db.select({
+    checkedAt: checkResults.checkedAt, 
+    status: checkResults.status
+  }).from(checkResults).orderBy(desc(checkResults.checkedAt)).limit(safelimit);
+
+  // aggregate by minute for instance
+  const aggregated = new Map<string, { time: Date; up: number; total: number }>();
+
+  for (const check of checks) {
+    const time = new Date(check.checkedAt);
+    time.setSeconds(0, 0);//round to the nearest zero
+    const key = time.toISOString();
+    
+    const existing = aggregated.get(key);
+    if(existing) {
+      existing.total++;
+      if (check.status === 'UP')
+        existing.up++;
+    } else {
+      aggregated.set(key, {
+        time,
+        up: check.status === 'UP' ? 1 : 0,
+        total: 1
+      });
+    }
+  }
+
+  const sorted = Array.from(aggregated.values()).sort((a, b) => a.time.getTime() -  b.time.getTime()).
+  map((b) => ({
+    timestamp: b.time.toISOString(),
+    healthScore: Math.round((b.up/b.total) * 100),
+    upCount: b.up,
+    totalCount: b.total,
+  }));
+
+  res.json({ data: sorted })
+  } catch (error) {
+    console.error('[monitors] GET /aggregate/health error:', error);
+    res.status(500).json({ error: 'Failed to fetch aggregate health' });
+  }
+})
 
 // GET /api/monitors/:id/transitions
 router.get('/:id/transitions', async (req, res) => {
