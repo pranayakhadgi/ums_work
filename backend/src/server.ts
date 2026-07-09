@@ -1,5 +1,14 @@
-// backend/src/server.ts
 import 'dotenv/config';
+
+console.log('[env] Raw values after dotenv load:', {
+  TOMCAT_HOST: process.env.TOMCAT_HOST,
+  TOMCAT_PORT: process.env.TOMCAT_PORT,
+  TOMCAT_SCHEME: process.env.TOMCAT_SCHEME,
+  TOMCAT_STATUS_URL: process.env.TOMCAT_STATUS_URL,
+  USE_TEST_FILE: process.env.USE_TEST_FILE,
+  NODE_ENV: process.env.NODE_ENV,
+  cwd: process.cwd(),
+});
 
 // SET ENV DEFAULTS BEFORE ANY IMPORTS THAT READ THEM
 if (!process.env.USE_TEST_FILE && !process.env.TOMCAT_STATUS_URL) {
