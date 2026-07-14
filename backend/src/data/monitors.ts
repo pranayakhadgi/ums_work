@@ -9,6 +9,7 @@ import {
   tomcatInstances,
 } from '../db/schema';
 import type { PingResult } from '../services/pinger';
+import {broadcast} from '../services/broadcaster';
 
 export async function getAllMonitors() {
   const allMonitors = await db.select().from(monitors).orderBy(desc(monitors.createdAt));
@@ -187,6 +188,14 @@ export async function updateMonitorStatus(
       to: newStatus,
       responseTimeMs: result.responseTimeMs,
       errorCategory: result.errorCategory,
+    });
+
+    broadcast({
+      type: 'STATE_TRANSITION',
+      monitorId: id,
+      fromStatus: oldStatus,
+      toStatus:newStatus,
+      triggeredAt: new Date().toISOString(),
     });
   }
 

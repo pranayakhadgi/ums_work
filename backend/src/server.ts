@@ -29,11 +29,13 @@ import express, { Request } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import {initWebSocket, broadcast} from './services/broadcaster';
 import { monitorsRouter } from './routes/monitors';
 import { discoveryRouter } from './routes/discovery';
 import { startScheduler } from './services/scheduler';
 import healthRoutes from './routes/health';
 import jvmRoutes from './routes/jvm';
+import { Server } from 'http';
 
 const app = express();
 
@@ -78,7 +80,9 @@ app.use((req, res) => {
 
 const PORT = process.env.PORT || 3001;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`[server] Listening on port ${PORT}`);
   startScheduler();
 });
+
+initWebSocket(server);

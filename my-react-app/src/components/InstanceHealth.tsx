@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { fetchLatestHealth } from '../api/health';
+import { HEALTH_MS, POLL_BUFFER_MS } from '../api/intervals';
 
 interface HealthSnapshot {
   id: string;
@@ -44,7 +45,7 @@ export default function InstanceHealth() {
       }
     };
     load();
-    const interval = setInterval(load, 30000);
+    const interval = setInterval(load, HEALTH_MS + POLL_BUFFER_MS);
     return () => clearInterval(interval);
   }, []);
 

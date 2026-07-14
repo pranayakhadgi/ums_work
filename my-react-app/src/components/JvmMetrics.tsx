@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { fetchLatestJvm } from '../api/health';
+import { JVM_MS, POLL_BUFFER_MS } from '../api/intervals';
 
 interface JvmSnapshot {
   id: string;
@@ -49,7 +50,7 @@ export default function JvmMetrics() {
       }
     };
     load();
-    const interval = setInterval(load, 30000);
+    const interval = setInterval(load, JVM_MS + POLL_BUFFER_MS);
     return () => clearInterval(interval);
   }, []);
 

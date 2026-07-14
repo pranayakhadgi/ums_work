@@ -8,6 +8,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
+import { HEALTH_MS, MONITOR_MS, POLL_BUFFER_MS } from '../api/intervals';
 
 interface HealthPoint {
   timestamp: string;
@@ -37,26 +38,31 @@ export default function HeartbeatChart({ monitors }: Props) {
     };
   }, [monitors]);
 
-  const fetchHistory = async () => {
-    try {
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
       const res = await fetch('/api/monitors/aggregate/health?limit=60');
       if (!res.ok) throw new Error('Failed to fetch health trend');
       const json = await res.json();
       setHistory(json.data ?? []);
-    } catch (e) {
+      } catch (e) {
       console.error('[HeartbeatChart] Failed to load history:', e);
-    } finally {
+      } finally {
       setLoading(false);
-    }
-  };
-
-  useEffect(() => {
+      }
+    };
+    
     fetchHistory();
-  }, [monitors.length]);
+
+    const interval = setInterval(fetchHistory, MONITOR_MS + POLL_BUFFER_MS);
+    return () => clearInterval(interval);//clean the memory
+  }, []);
 
   // Merge: historical points from DB + current synthetic point
   // If history is empty, we show just the current point so the chart isn't blank
   const chartData = useMemo(() => {
+    if(!currentHealth) return [];
+
     if (history.length > 0) {
       // If the latest historical point is very recent (within 2 min), don't duplicate
       const latest = history[history.length - 1];
@@ -66,10 +72,10 @@ export default function HeartbeatChart({ monitors }: Props) {
         // Replace the last point with fresher current data
         return [...history.slice(0, -1), currentHealth];
       }
-      return [...history, currentHealth].filter(Boolean) as HealthPoint[];
+      return [...history, currentHealth];
     }
     // No history yet: show current state as a single point
-    return currentHealth ? [currentHealth] : [];
+    return [currentHealth];
   }, [history, currentHealth]);
 
   const getStrokeColor = (score: number) => {
@@ -87,7 +93,7 @@ export default function HeartbeatChart({ monitors }: Props) {
     return (
       <div className="bg-[#1c202c] border border-[#2a2e3d] rounded-lg p-3 shadow-lg">
         <div className="text-xs text-[#8b90a7] mb-1">
-          {new Date(p.timestamp).toLocaleTimeString('en-US', { hour12: false })}
+          {new Date(p.timestamp).toLocaleTimeString('en-US', { hour12: true })}
           {isSynthetic && <span className="text-[#eab308] ml-2">(live)</span>}
         </div>
         <div className="text-lg font-semibold" style={{ color: getStrokeColor(p.healthScore) }}>

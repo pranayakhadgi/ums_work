@@ -144,6 +144,12 @@ a:hover { text-decoration: underline; }
   gap: 12px;
 }
 
+.pulse-dot.disconnected {
+  background: var(--text-muted);
+  box-shadow: none;
+  animation: none;
+}
+
 /* ── Buttons ─────────────────────────────────────────────────────────────────── */
 .btn {
   display: inline-flex;

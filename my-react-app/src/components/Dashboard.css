@@ -281,6 +281,99 @@
   border-color: var(--border-hover);
   background: var(--bg-surface);
 }
+
+.monitor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;           
+  align-items: start; 
+}
+
+.monitor-card-compact {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  animation: fadeIn 0.3s ease both;
+}
+
+.monitor-card-compact:hover {
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-card);
+}
+
+/* Top row: dot + name + env */
+.monitor-card-compact .card-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.monitor-card-compact .status-indicator {
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+
+.monitor-card-compact .monitor-name-cell {
+  flex: 1 1 0;
+  min-width: 0;           /* crucial for grid truncation */
+}
+
+.monitor-card-compact .monitor-name {
+  display: block;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitor-card-compact .monitor-url {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+/* Bottom row: status pill + timestamp */
+.monitor-card-compact .card-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.monitor-card-compact .last-check {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* Responsive breakpoints */
+@media (max-width: 1024px) {
+  .monitor-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .monitor-grid {
+    grid-template-columns: 1fr;
+  }
+}
 .status-indicator {
   width: 8px;
   height: 8px;
