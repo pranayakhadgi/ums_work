@@ -6,6 +6,7 @@ import { pingUrl } from './pinger';
 import { updateMonitorStatus } from '../data/monitors';
 import { getOrCreateDefaultInstance } from '../data/instances';
 import { randomUUID } from 'crypto';
+import { broadcast } from './broadcaster';
 
 let discoveryInterval: NodeJS.Timeout | null = null;
 let healthInterval: NodeJS.Timeout | null = null;
@@ -66,7 +67,14 @@ export async function runMonitors() {
       console.error(`[scheduler] Monitor ping failed for ${monitor.name} (${monitor.url}):`, err instanceof Error ? err.message : err);
     }
   }));
+  
   await Promise.all(tasks);
+
+  broadcast({
+    type: 'CHECK_BATCH_COMPLETE',
+    checkedAt: new Date().toISOString(),
+    monitorCount: allMonitors.length,
+  });
 
   console.log('[scheduler] Monitor check batch complete');
 }
