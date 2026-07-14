@@ -8,3 +8,6 @@ scrape.py
 *.db-shm
 *.db-wal
 test-data/
+work_notes.md
+observation.txt
+my-react-app/FRONTEND_DESIGN_OVERVIEW.md

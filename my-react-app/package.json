@@ -13,10 +13,16 @@
   },
   "dependencies": {
     "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
+    "d3-shape": "^3.2.0",
     "lucide-react": "^1.20.0",
+    "motion": "^12.42.2",
+    "notion": "^0.0.1",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^6.30.4",
+    "recharts": "^3.9.2",
+    "sonner": "^2.0.7",
     "zustand": "^4.5.7"
   },
   "devDependencies": {

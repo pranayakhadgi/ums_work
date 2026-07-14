@@ -9,6 +9,7 @@ import HeartbeatChart from './HeartbeatChart';
 import StatusBento from './StatusBento';
 import CommandBar from './CommandBar';
 import './Dashboard.css';
+import { DISCOVERY_MS, MONITOR_MS, POLL_BUFFER_MS } from '../api/intervals';
 
 // Memoized clock component.
 // Only this component re-renders every second instead of the entire dashboard.
@@ -22,7 +23,7 @@ const ClockDisplay = React.memo(() => {
 
   return (
     <div className="clock">
-      {time.toLocaleTimeString('en-US', { hour12: false })}
+      {time.toLocaleTimeString('en-US', { hour12: true })}
     </div>
   );
 });
@@ -33,19 +34,71 @@ export default function MonitorDashboard() {
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [lastMonitorPushAt, setLastMonitorPushAt] = useState<number>(0);
+  const [lastDiscoveryPushAt, setLastDiscoveryPushAt] = useState<number>(0);
+  const [wsConnected, setWsConnected] = useState(false);
 
   useEffect(() => {
-    loadMonitors();
-    loadCandidates();
+  loadMonitors();
+  loadCandidates();
+}, [loadMonitors, loadCandidates]);
+
+  useEffect(() => {
+    const socket = new WebSocket('ws://localhost:3001');
+
+    socket.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === 'CHECK_BATCH_COMPLETE' || msg.type === 'STATE_TRANSITION') {
+        loadMonitors();
+        setLastMonitorPushAt(Date.now());
+      }
+    };
+
+    socket.onopen = () => {
+      console.log('[ws] Connected');
+      setWsConnected(true);
+      setLastMonitorPushAt(Date.now());
+      setLastDiscoveryPushAt(Date.now());
+    };
+
+    socket.onclose = () => {
+      console.log('[ws] Disconnected')
+      setWsConnected(false)
+    };
+
+    socket.onerror = (err) => {
+      console.log('[ws] Error: ', err);
+      setWsConnected(false);
+    }
+
+    return () => socket.close();
   }, [loadMonitors, loadCandidates]);
 
+  //monitor 30s
   useEffect(() => {
     const interval = setInterval(() => {
-      loadMonitors();
-      loadCandidates();
-    }, 30000);
+      const sinceLastPush = Date.now() - lastMonitorPushAt;
+      const gracePeriod = MONITOR_MS + POLL_BUFFER_MS;
+
+      if(sinceLastPush > gracePeriod){
+        loadMonitors();
+      }
+    }, MONITOR_MS + POLL_BUFFER_MS);
     return () => clearInterval(interval);
-  }, [loadMonitors, loadCandidates]);
+  }, [loadMonitors, lastMonitorPushAt]);
+
+  //discovery 60s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const sinceLastPush = Date.now() - lastDiscoveryPushAt;
+      const gracePeriod = MONITOR_MS + POLL_BUFFER_MS;
+
+      if(sinceLastPush > gracePeriod){
+        loadCandidates();
+      }
+    }, DISCOVERY_MS + POLL_BUFFER_MS);
+    return () => clearInterval(interval);
+  }, [loadCandidates, lastDiscoveryPushAt]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -94,8 +147,8 @@ export default function MonitorDashboard() {
 
           <div className="header-right">
             <div className="live-badge">
-              <div className="pulse-dot"></div>
-              <span>Live</span>
+              <div className={`pulse-dot ${wsConnected ? 'connected' : 'disconnected'}`}/>
+              <span>{wsConnected ? 'Live' : 'Polling'}</span>
             </div>
 
             <ClockDisplay />

@@ -37,7 +37,7 @@ export async function pingUrl(url: string, timeoutMs = 5000): Promise<PingResult
       method: 'GET',
       signal: controller.signal,
       // @ts-ignore — Node 18+ fetch
-      dispatcher: agent,
+      // dispatcher: agent,
     });
 
     clearTimeout(timeoutId);
@@ -52,11 +52,14 @@ export async function pingUrl(url: string, timeoutMs = 5000): Promise<PingResult
     clearTimeout(timeoutId);
     const responseTimeMs = Date.now() - startTime;
 
+    // error.cause wraps up any node fetch error
+    const causeCode = error.cause?.code || error.code;
+    
     let errorCategory: PingResult['errorCategory'] = 'UNKNOWN';
     if (error.name === 'AbortError') errorCategory = 'TIMEOUT';
-    else if (error.code === 'ECONNREFUSED') errorCategory = 'REFUSED';
-    else if (error.code === 'ENOTFOUND') errorCategory = 'DNS_FAILURE';
-    else if (error.code === 'CERT_HAS_EXPIRED') errorCategory = 'CERT_EXPIRED';
+    else if (causeCode === 'ECONNREFUSED') errorCategory = 'REFUSED';
+    else if (causeCode === 'ENOTFOUND') errorCategory = 'DNS_FAILURE';
+    else if (causeCode === 'CERT_HAS_EXPIRED') errorCategory = 'CERT_EXPIRED';
 
     return {
       status: 'DOWN',

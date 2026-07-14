@@ -6,6 +6,7 @@ import { pingUrl } from './pinger';
 import { updateMonitorStatus } from '../data/monitors';
 import { getOrCreateDefaultInstance } from '../data/instances';
 import { randomUUID } from 'crypto';
+import { broadcast } from './broadcaster';
 
 let discoveryInterval: NodeJS.Timeout | null = null;
 let healthInterval: NodeJS.Timeout | null = null;
@@ -45,11 +46,37 @@ export function stopScheduler() {
  * works well with monitoring around 20 computers
  */
 export async function runMonitors() {
-  const allMonitors = await db.select().from(monitors);
-  for (const monitor of allMonitors) {//one monitor cannot start until the previous one is done
-    const result = await pingUrl(monitor.url, 5000);
-    await updateMonitorStatus(monitor.id, result);// o(N*5) <-- worst case
+  const allMonitors = await db.select().from(monitors).where(eq(monitors.isEnabled, true));
+
+  //throw for no monitors found
+  if (allMonitors.length === 0) {
+    console.log('[scheduler] No monitors found');
+    return;
   }
+
+  //bounded concurrency (pings 10 monitor at a time parallel with the other monitor sequence)
+  const {default: plimit } = await import ('p-limit');
+  const limit = plimit(10);
+
+  //preserve linear monitor crash bottleneck
+  const tasks = allMonitors.map((monitor) => limit(async () => {
+    try {
+      const result = await pingUrl(monitor.url, 5000);
+      await updateMonitorStatus(monitor.id, result);
+    } catch (err) {
+      console.error(`[scheduler] Monitor ping failed for ${monitor.name} (${monitor.url}):`, err instanceof Error ? err.message : err);
+    }
+  }));
+  
+  await Promise.all(tasks);
+
+  broadcast({
+    type: 'CHECK_BATCH_COMPLETE',
+    checkedAt: new Date().toISOString(),
+    monitorCount: allMonitors.length,
+  });
+
+  console.log('[scheduler] Monitor check batch complete');
 }
 
 async function runDiscovery() {
