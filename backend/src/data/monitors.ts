@@ -15,6 +15,13 @@ export async function getAllMonitors() {
   const allMonitors = await db.select().from(monitors).orderBy(desc(monitors.createdAt));
   if (allMonitors.length === 0) return [];
 
+  // severity: down surfaces first, then unknown, then stable.
+  // doing this serverside so every consumer gets the same order.
+  allMonitors.sort((a, b) => {
+    const rank = (s: string) => s === 'DOWN' ? 0 : s === 'UNKNOWN' ? 1 : 2;
+    return rank(a.status) - rank(b.status);
+  });
+
   const now = Date.now();
   const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
   const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
