@@ -1,0 +1,1 @@
+ALTER TABLE `discovered_apps` ADD `sessions` integer DEFAULT 0 NOT NULL;

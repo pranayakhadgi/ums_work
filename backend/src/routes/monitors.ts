@@ -73,51 +73,65 @@ router.get('/:id/history', async (req, res) => {
 
 // GET /api/monitors/aggregate/health - last N checks across all monitors
 router.get('/aggregate/health', async (req, res) => {
-  try{
-  const limit = parseInt(req.query.limit as string) || 60;
-  const safelimit = Math.min(limit, 200); //sets the boundary for the aggregate
+  try {
+    const limit = parseInt(req.query.limit as string) || 60;
+    const safelimit = Math.min(limit, 200); //sets the boundary for the aggregate
 
-  const checks = await db.select({
-    checkedAt: checkResults.checkedAt, 
-    status: checkResults.status
-  }).from(checkResults).orderBy(desc(checkResults.checkedAt)).limit(safelimit);
+    const checks = await db.select({
+      checkedAt: checkResults.checkedAt, 
+      status: checkResults.status
+    }).from(checkResults).orderBy(desc(checkResults.checkedAt)).limit(safelimit);
 
-  // aggregate by minute for instance
-  const aggregated = new Map<string, { time: Date; up: number; total: number }>();
+    // aggregate by minute bucket. keep all three status buckets so the frontend
+    // can render a true stacked area instead of a derived percentage.
+    const aggregated = new Map<string, {
+      time: Date;
+      up: number;
+      down: number;
+      unknown: number;
+      total: number;
+    }>();
 
-  for (const check of checks) {
-    const time = new Date(check.checkedAt);
-    time.setSeconds(0, 0);//round to the nearest zero
-    const key = time.toISOString();
-    
-    const existing = aggregated.get(key);
-    if(existing) {
-      existing.total++;
-      if (check.status === 'UP')
-        existing.up++;
-    } else {
-      aggregated.set(key, {
-        time,
-        up: check.status === 'UP' ? 1 : 0,
-        total: 1
-      });
+    for (const check of checks) {
+      const time = new Date(check.checkedAt);
+      time.setSeconds(0, 0);
+      const key = time.toISOString();
+
+      const existing = aggregated.get(key);
+      if (existing) {
+        existing.total++;
+        if (check.status === 'UP') existing.up++;
+        else if (check.status === 'DOWN') existing.down++;
+        else if (check.status === 'UNKNOWN') existing.unknown++;
+      } else {
+        aggregated.set(key, {
+          time,
+          up: check.status === 'UP' ? 1 : 0,
+          down: check.status === 'DOWN' ? 1 : 0,
+          unknown: check.status === 'UNKNOWN' ? 1 : 0,
+          total: 1,
+        });
+      }
     }
-  }
 
-  const sorted = Array.from(aggregated.values()).sort((a, b) => a.time.getTime() -  b.time.getTime()).
-  map((b) => ({
-    timestamp: b.time.toISOString(),
-    healthScore: Math.round((b.up/b.total) * 100),
-    upCount: b.up,
-    totalCount: b.total,
-  }));
+    const sorted = Array.from(aggregated.values())
+      .sort((a, b) => a.time.getTime() - b.time.getTime())
+      .map((b) => ({
+        timestamp: b.time.toISOString(),
+        // keep healthscore for any existing consumers
+        healthScore: b.total > 0 ? Math.round((b.up / b.total) * 100) : 0,
+        upCount: b.up,
+        downCount: b.down,
+        unknownCount: b.unknown,
+        totalCount: b.total,
+      }));
 
-  res.json({ data: sorted })
+    res.json({ data: sorted });
   } catch (error) {
     console.error('[monitors] GET /aggregate/health error:', error);
     res.status(500).json({ error: 'Failed to fetch aggregate health' });
   }
-})
+});
 
 // GET /api/monitors/:id/transitions
 router.get('/:id/transitions', async (req, res) => {

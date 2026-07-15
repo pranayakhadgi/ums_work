@@ -3,7 +3,7 @@ import { discoveredApps, instanceHealthSnapshots, jvmSnapshots, monitors } from 
 import { eq, and } from 'drizzle-orm';
 import { discoverApps, fetchInstanceHealth, fetchJvmSnapshot } from './tomcatScraper';
 import { pingUrl } from './pinger';
-import { updateMonitorStatus } from '../data/monitors';
+import { createMonitor, updateMonitorStatus } from '../data/monitors';
 import { getOrCreateDefaultInstance } from '../data/instances';
 import { randomUUID } from 'crypto';
 import { broadcast } from './broadcaster';
@@ -17,6 +17,36 @@ const DISCOVERY_MS = 60000;
 const HEALTH_MS = 60000;
 const JVM_MS = 300000;
 const MONITOR_MS = 30000;// will add jitter during prod. 
+
+function getEnv() {
+    return {
+        mode: process.env.AUTO_PROMOTE_MODE || 'off',
+        include: (process.env.AUTO_PROMOTE_INCLUDE || '').split(',').filter(Boolean),
+        exclude: (process.env.AUTO_PROMOTE_EXCLUDE || '/synctl, /manager, /wsastub, /host-manager').split(',').filter(Boolean),
+        sessionThreshold: parseInt(process.env.AUTO_PROMOTE_SESSION_THRESHOLD || '1', 10),
+    };
+}
+
+const INFRASTRUCTURE_PATHS = new Set(['/synctl', '/manager', '/wsastub', '/host-manager']);
+
+//autopromote discovered apps
+function shouldAutoPromote(app: {state: string; sessions: number; contextPath: string }): boolean {
+  if (app.state !== 'running') return false;
+
+  const env = getEnv();
+  switch (env.mode) {
+    case 'include':
+      return env.include.some(p => app.contextPath.toLowerCase().includes(p.toLowerCase()));
+    case 'exclude':
+      return !env.exclude.some(p => app.contextPath.toLowerCase().includes(p.toLowerCase()));
+    case 'session':
+      return app.sessions >= env.sessionThreshold;
+    case 'hybrid':
+      return app.sessions > 0 && !INFRASTRUCTURE_PATHS.has(app.contextPath);
+    default:
+      return false;    
+  }
+}
 
 export function startScheduler() {
   console.log('[scheduler] Starting all jobs...');
@@ -93,26 +123,41 @@ async function runDiscovery() {
         )
       );
 
+      let targetApp: typeof discoveredApps.$inferSelect | undefined;
+
       if (existing.length === 0) {
-        await db.insert(discoveredApps).values({
+        const [inserted] = await db.insert(discoveredApps).values({
           id: randomUUID(),
           instanceId: instance.id,
           name: app.displayName || app.contextPath,
           contextPath: app.contextPath,
           tomcatState: app.state,
+          sessions: app.sessions,
           discoveredAt: new Date(),
           lastSeenAt: new Date(),
-        });
-        console.log(`[discovery] New app: ${app.contextPath}`);
+        }).returning();
+        targetApp = inserted;
+        console.log(`[discovery] New app: ${app.contextPath} (${app.sessions} sessions)`);
       } else {
         await db.update(discoveredApps)
-          .set({ lastSeenAt: new Date(), tomcatState: app.state })
+          .set({ lastSeenAt: new Date(), tomcatState: app.state, sessions: app.sessions })
           .where(eq(discoveredApps.id, existing[0].id));
+        targetApp = existing[0];
+      }
+
+      // auto promote hook - skip if already marked as promoted in parsed data
+      if (targetApp && !targetApp.isPromoted && shouldAutoPromote(app)) {
+        try {
+          await createMonitor({ discoveredAppId: targetApp.id, name: app.displayName || app.contextPath });
+          console.log(`[discovery] Auto-promoted: ${app.contextPath}`);
+        } catch (err) {
+          console.error(`[discovery] Auto-promotion failed for ${app.contextPath}:`, err);
+        }
       }
     }
-    console.log(`[scheduler] Discovery complete: ${apps.length} apps`);
+    console.log('[discovery] Discovery completed');
   } catch (err) {
-    console.error('[scheduler] Discovery failed:', err);
+    console.error('[discovery] Discovery failed:', err);
   }
 }
 

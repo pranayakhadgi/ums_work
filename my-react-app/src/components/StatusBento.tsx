@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react';
 
 interface Props {
   up: number;
