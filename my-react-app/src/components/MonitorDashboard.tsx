@@ -30,7 +30,7 @@ const ClockDisplay = React.memo(() => {
 
 export default function MonitorDashboard() {
   const { monitors, loading, error, loadMonitors } = useMonitorStore();
-  const { candidates, loadCandidates } = useDiscoveryStore();
+  const { loadCandidates } = useDiscoveryStore();
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -148,7 +148,7 @@ export default function MonitorDashboard() {
           <div className="header-right">
             <div className="live-badge">
               <div className={`pulse-dot ${wsConnected ? 'connected' : 'disconnected'}`}/>
-              <span>{wsConnected ? 'Live' : 'Polling'}</span>
+              <span>{wsConnected ? 'System Live' : 'System Polling'}</span>
             </div>
 
             <ClockDisplay />
