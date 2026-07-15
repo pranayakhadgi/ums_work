@@ -34,6 +34,7 @@ export const discoveredApps = sqliteTable('discovered_apps', {
   discoveredAt: integer('discovered_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
   lastSeenAt: integer('last_seen_at', { mode: 'timestamp' }).notNull().$defaultFn(() => new Date()),
   isPromoted: integer('is_promoted', { mode: 'boolean' }).notNull().default(false),
+  sessions: integer('sessions').notNull().default(0),
 });
 
 

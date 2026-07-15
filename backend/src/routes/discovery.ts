@@ -9,6 +9,12 @@ import { getOrCreateDefaultInstance } from '../data/instances';
 
 const router = Router();
 
+function getEnv() {
+  return {
+    promote: process.env.AUTO_PROMOTE || '',
+  };
+}
+
 // POST /api/discovery — trigger scan, return discovered apps
 router.post('/', async (req, res) => {
   const startTime = Date.now();
@@ -61,9 +67,10 @@ router.post('/', async (req, res) => {
 
 // GET /api/discover/candidates — all discovered apps
 router.get('/candidates', async (req, res) => {
+  const env = getEnv();
   try {
     const candidates = await db.select().from(discoveredApps).orderBy(desc(discoveredApps.discoveredAt));
-    res.json({ success: true, data: candidates });
+    res.json({ success: true, data: candidates, meta: { autoPromote: env.promote !== 'off', mode: env.promote }, });
   } catch (error) {
     console.error('[discovery] GET /candidates error:', error);
     res.status(500).json({ error: 'Failed to fetch candidates' });

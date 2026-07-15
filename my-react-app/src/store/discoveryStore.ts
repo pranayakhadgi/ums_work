@@ -10,6 +10,7 @@ export interface DiscoveredApp {
   discoveredAt: string;
   lastSeenAt: string;
   isPromoted: boolean;
+  sessions: number;
 }
 
 interface DiscoveryStore {
@@ -18,6 +19,7 @@ interface DiscoveryStore {
   error: string | null;
   loadCandidates: () => Promise<void>;
   promote: (app: DiscoveredApp) => Promise<void>;
+  promoteAll: (apps: DiscoveredApp[]) => Promise<void>;
 }
 
 export const useDiscoveryStore = create<DiscoveryStore>((set, get) => ({
@@ -44,4 +46,15 @@ export const useDiscoveryStore = create<DiscoveryStore>((set, get) => ({
       set({ error: e instanceof Error ? e.message : 'an unknown error occurred', loading: false });
     }
   },
+
+  promoteAll: async (apps) => {
+    set({ loading: true, error: null });
+    try {
+      await Promise.all(apps.map(app => promoteToMonitor(app)));
+      await get().loadCandidates();
+    } catch (e) {
+      set({ error: e instanceof Error ? e.message : 'Bulk promote failed', loading: false });
+    }
+  }
 }));
+
