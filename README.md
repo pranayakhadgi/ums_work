@@ -1,6 +1,6 @@
-<img src="my-react-app/public/wiab-logo.png" alt="Uptime Tomcat Monitor" width="40" align="left" style="margin-right:12px" />
 
-# Uptime Tomcat Monitor
+
+# <img src="my-react-app/public/wiab-logo.png" alt="Uptime Tomcat Monitor" width="150" style="margin-right:24px" /> Uptime Tomcat Monitor 
 
 A real-time dashboard for monitoring the uptime and health of Tomcat-hosted applications. Checks registered endpoints on a schedule, surfaces DOWN and degraded services immediately, and exposes JVM and connector-level metrics for deeper investigation.
 
