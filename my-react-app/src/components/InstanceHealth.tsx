@@ -123,7 +123,7 @@ export default function InstanceHealth() {
                 </div>
                 <div className="metric">
                   <div className="metric-label">Errors</div>
-                  <div className="metric-value" style={{ color: 'var(--up)' }}>
+                  <div className="metric-value" style={{ color: 'var(--text-primary)' }}>
                     {h.requestInfo?.errorCount ?? 0}
                   </div>
                 </div>

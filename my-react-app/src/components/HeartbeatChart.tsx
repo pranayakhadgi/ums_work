@@ -1,35 +1,55 @@
-import { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import {
   ComposedChart,
-  Line,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip,
-  ReferenceArea,
   ResponsiveContainer,
+  Customized,
 } from 'recharts';
+import { Clock } from 'lucide-react';
 import { MONITOR_MS, POLL_BUFFER_MS } from '../api/intervals';
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 interface HealthPoint {
   timestamp: string;
-  upCount: number;
-  downCount: number;
-  unknownCount: number;
-  totalCount: number;
+  t: number;
+  up: number;
+  down: number;
+  unknown: number;
+  total: number;
   healthScore?: number;
+  avgLatency?: number;
+  p95Latency?: number;
+  degradedRate?: number;
+  downRate?: number;
+  errorBreakdown?: Record<string, number>;
 }
 
-/** Internal chart row — uses epoch ms for x-axis; nulls signal a gap break */
+/**
+ * Internal chart row.
+ * - Rate fields (upRate/downRate/unknownRate) are 0–100 and drive the plotted lines.
+ *   null means gap sentinel — Recharts will break the line here.
+ * - Raw counts (up/down/unknown/totalCount) are kept only for tooltip display.
+ */
 interface ChartRow {
   t: number;
-  up: number | null;
-  unknown: number | null;
-  down: number | null;
-  // kept for tooltip lookup
+  // Plotted values — rates (0-100) or null for gap break sentinels
+  upRate: number | null;
+  downRate: number | null;
+  unknownRate: number | null;
+  // Raw counts for tooltip
+  up?: number;
+  down?: number;
+  unknown?: number;
   totalCount?: number;
+  // Extra fields for expanded tooltip
+  healthScore?: number;
+  avgLatency?: number;
+  p95Latency?: number;
+  errorBreakdown?: Record<string, number>;
   timestamp?: string;
   isSynthetic?: boolean;
 }
@@ -38,388 +58,489 @@ interface Props {
   monitors: { id: string; status: string; lastChecked: string | null }[];
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+interface TooltipState {
+  visible: boolean;
+  x: number;
+  y: number;
+  row: ChartRow | null;
+  expanded: boolean;
+}
 
-/**
- * Insert a null-valued break row whenever consecutive points are more than
- * `gapThresholdMs` apart so Recharts breaks the line instead of connecting.
- */
-function insertGapBreaks(rows: ChartRow[], gapThresholdMs: number): ChartRow[] {
-  const out: ChartRow[] = [];
-  for (let i = 0; i < rows.length; i++) {
-    out.push(rows[i]);
-    if (i < rows.length - 1 && rows[i + 1].t - rows[i].t > gapThresholdMs) {
-      // break sentinel — halfway between the two points
-      out.push({
-        t: Math.round((rows[i].t + rows[i + 1].t) / 2),
-        up: null,
-        unknown: null,
-        down: null,
-      });
-    }
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+/** Convert raw counts to 0–100 rate, or null if no checks in bucket. */
+function toRate(count: number, total: number): number | null {
+  return total > 0 ? Math.round((count / total) * 100) : null;
+}
+
+// ── Count-Up Hook ─────────────────────────────────────────────────────────────
+
+function useCountUp(target: number, duration = 150): number {
+  const [value, setValue] = useState(target);
+  const prevRef = useRef(target);
+
+  useEffect(() => {
+    const from = prevRef.current;
+    if (from === target) return;
+    const startTime = Date.now();
+    const animate = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setValue(Math.round(from + (target - from) * eased));
+      if (progress < 1) requestAnimationFrame(animate);
+      else prevRef.current = target;
+    };
+    requestAnimationFrame(animate);
+  }, [target, duration]);
+
+  return value;
+}
+
+// ── CSS token constants for use in Recharts SVG props ─────────────────────────
+
+function getCssVar(name: string, fallback: string): string {
+  if (typeof document !== 'undefined') {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    if (v) return v;
   }
-  return out;
+  return fallback;
 }
 
-/**
- * Generate up to `maxTicks` evenly-spaced ticks on clean minute boundaries
- * within [domainMin, domainMax].
- */
-function generateTicks(domainMin: number, domainMax: number, maxTicks = 6): number[] {
-  const spanMs = domainMax - domainMin;
-  if (spanMs <= 0) return [domainMin];
+const C = {
+  up:       () => getCssVar('--status-up',      '#22c55e'),
+  down:     () => getCssVar('--status-down',    '#ef4444'),
+  unknown:  () => getCssVar('--status-unknown', '#eab308'),
+  border:   () => getCssVar('--border',         '#2a2e3d'),
+  textSec:  () => getCssVar('--text-secondary', '#8b90a7'),
+  textMut:  () => getCssVar('--text-muted',     '#555a72'),
+};
 
-  // pick a step that lands on a clean boundary (1, 5, 10, 15, 30 min …)
-  const candidates = [1, 2, 5, 10, 15, 30, 60].map((m) => m * 60_000);
-  const ideal = spanMs / maxTicks;
-  const step = candidates.find((c) => c >= ideal) ?? candidates[candidates.length - 1];
+// ── Chart Definitions (gradients) ─────────────────────────────────────────────
 
-  // first tick = next clean multiple after domainMin
-  const first = Math.ceil(domainMin / step) * step;
-  const ticks: number[] = [];
-  for (let t = first; t <= domainMax; t += step) {
-    ticks.push(t);
-  }
-  return ticks;
-}
-
-// ── Tooltip ──────────────────────────────────────────────────────────────────
-
-interface TooltipProps {
-  active?: boolean;
-  payload?: Array<{ payload: ChartRow }>;
-}
-
-const CustomTooltip = ({ active, payload }: TooltipProps) => {
-  if (!active || !payload?.length) return null;
-  const row = payload[0].payload;
-  if (row.up === null) return null; // gap sentinel
+function ChartDefs() {
+  const up      = C.up();
+  const down    = C.down();
+  const unknown = C.unknown();
+  const textSec = C.textSec();
 
   return (
-    <div className="bg-[#1c202c] border border-[#2a2e3d] rounded-lg p-3 shadow-lg min-w-[140px]">
-      <div className="text-xs text-[#8b90a7] mb-2">
-        {row.timestamp
-          ? new Date(row.timestamp).toLocaleTimeString('en-US', { hour12: true })
-          : new Date(row.t).toLocaleTimeString('en-US', { hour12: true })}
-        {row.isSynthetic && <span className="text-[#eab308] ml-2">(live)</span>}
+    <defs>
+      <linearGradient id="grad-up" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor={up} stopOpacity={0.35} />
+        <stop offset="100%" stopColor={up} stopOpacity={0.02} />
+      </linearGradient>
+      <linearGradient id="grad-down" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor={down} stopOpacity={0.35} />
+        <stop offset="100%" stopColor={down} stopOpacity={0.02} />
+      </linearGradient>
+      <linearGradient id="grad-unknown" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stopColor={unknown} stopOpacity={0.25} />
+        <stop offset="100%" stopColor={unknown} stopOpacity={0.02} />
+      </linearGradient>
+      <pattern id="hatch-unknown" patternUnits="userSpaceOnUse" width="4" height="4">
+        <path d="M-1,1 l2,-2 M0,4 l4,-4 M3,5 l2,-2" stroke={textSec} strokeWidth={0.5} opacity={0.3} />
+      </pattern>
+    </defs>
+  );
+}
+
+// ── Tooltip Card ──────────────────────────────────────────────────────────────
+
+interface TooltipCardProps {
+  state: TooltipState;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  onToggleExpand: () => void;
+}
+
+function TooltipCard({ state, containerRef, onToggleExpand }: TooltipCardProps) {
+  if (!state.visible || !state.row) return null;
+
+  const row = state.row;
+  const total = row.totalCount || 0;
+  const upPct = total > 0 ? Math.round(((row.up || 0) / total) * 100) : 0;
+  const downPct = total > 0 ? Math.round(((row.down || 0) / total) * 100) : 0;
+  const unknownPct = total > 0 ? Math.round(((row.unknown || 0) / total) * 100) : 0;
+
+  return (
+    <div
+      className={`chart-tooltip ${state.expanded ? 'expanded' : ''}`}
+      style={{
+        position: 'absolute',
+        left: state.x,
+        top: state.y,
+        pointerEvents: 'auto',
+      }}
+    >
+      <div className="tooltip-header" onClick={onToggleExpand}>
+        <Clock size={12} />
+        <span>
+          {row.timestamp
+            ? new Date(row.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+            : 'Now'}
+        </span>
+        {row.isSynthetic && <span className="tooltip-synthetic">Live</span>}
       </div>
-      <div className="space-y-1 text-sm">
-        <div className="flex justify-between gap-4">
-          <span className="text-[#22c55e]">up</span>
-          <span>{row.up ?? '—'}</span>
+
+      <div className="tooltip-body">
+        <div className="tooltip-row">
+          <span className="dot" style={{ background: C.up() }} />
+          <span>Up</span>
+          <span className="value">{row.up || 0} ({upPct}%)</span>
         </div>
-        <div className="flex justify-between gap-4">
-          <span className="text-[#eab308]">unknown</span>
-          <span>{row.unknown ?? '—'}</span>
+        <div className="tooltip-row">
+          <span className="dot" style={{ background: C.down() }} />
+          <span>Down</span>
+          <span className="value">{row.down || 0} ({downPct}%)</span>
         </div>
-        <div className="flex justify-between gap-4">
-          <span className="text-[#ef4444]">down</span>
-          <span>{row.down ?? '—'}</span>
-        </div>
-        <div className="border-t border-[#2a2e3d] pt-1 mt-1 flex justify-between gap-4 text-[#8b90a7]">
-          <span>total</span>
-          <span>{row.totalCount ?? ((row.up ?? 0) + (row.unknown ?? 0) + (row.down ?? 0))}</span>
-        </div>
+        {row.unknown ? (
+          <div className="tooltip-row">
+            <span className="dot" style={{ background: C.unknown() }} />
+            <span>Unknown</span>
+            <span className="value">{row.unknown} ({unknownPct}%)</span>
+          </div>
+        ) : null}
+
+        {state.expanded && (
+          <>
+            {typeof row.healthScore === 'number' && (
+              <div className="tooltip-row">
+                <span>Health Score</span>
+                <span className="value">{row.healthScore}</span>
+              </div>
+            )}
+            {typeof row.avgLatency === 'number' && (
+              <div className="tooltip-row">
+                <span>Avg Latency</span>
+                <span className="value">{row.avgLatency}ms</span>
+              </div>
+            )}
+            {typeof row.p95Latency === 'number' && (
+              <div className="tooltip-row">
+                <span>P95 Latency</span>
+                <span className="value">{row.p95Latency}ms</span>
+              </div>
+            )}
+            {row.errorBreakdown && Object.keys(row.errorBreakdown).length > 0 && (
+              <div className="tooltip-errors">
+                {Object.entries(row.errorBreakdown).map(([cat, count]) => (
+                  <div key={cat} className="tooltip-error-row">
+                    <span>{cat}</span>
+                    <span>{count}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {!state.expanded && (
+          <div className="tooltip-hint">Click to expand</div>
+        )}
       </div>
     </div>
   );
-};
-
-// ── Gap regions (for ReferenceArea shading) ──────────────────────────────────
-
-interface GapRegion {
-  x1: number;
-  x2: number;
 }
 
-function findGapRegions(rows: ChartRow[]): GapRegion[] {
-  return rows
-    .filter((r) => r.up === null)
-    .map((sentinel) => {
-      // find the real points on either side of this sentinel
-      const idx = rows.indexOf(sentinel);
-      const before = rows[idx - 1];
-      const after = rows[idx + 1];
-      return {
-        x1: before?.t ?? sentinel.t,
-        x2: after?.t ?? sentinel.t,
-      };
-    });
+// ── Hatch Bands for unknown regions ───────────────────────────────────────────
+
+interface HatchBandsProps {
+  formattedGraphicalItems: any[];
+  offset: number;
 }
 
-// ── Chart ────────────────────────────────────────────────────────────────────
+function HatchBands({ formattedGraphicalItems, offset }: HatchBandsProps) {
+  if (!formattedGraphicalItems || formattedGraphicalItems.length === 0) return null;
 
-export default function HeartbeatChart({ monitors }: Props) {
-  const [history, setHistory] = useState<HealthPoint[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [currentHealth, setCurrentHealth] = useState<HealthPoint | null>(null);
+  // Find the unknown area's graphical items
+  const unknownItem = formattedGraphicalItems.find(
+    (item: any) => item?.dataKey === 'unknownRate'
+  );
+  if (!unknownItem?.points || unknownItem.points.length === 0) return null;
 
-  // Build a live "synthetic" point from the current monitors prop
-  useEffect(() => {
-    const total = monitors.length;
-    const timer = setTimeout(() => {
-      if (total === 0) {
-        setCurrentHealth(null);
-        return;
+  const points: Array<{ x: number; y: number }> = unknownItem.points;
+  const bands: Array<{ x: number; width: number }> = [];
+  let currentBand: { x: number; width: number } | null = null;
+
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    if (p.y != null && p.y > 0) {
+      const x = p.x - offset;
+      if (!currentBand) {
+        currentBand = { x, width: 1 };
+      } else {
+        currentBand.width += 1;
       }
-      const up = monitors.filter((m) => m.status === 'UP').length;
-      const down = monitors.filter((m) => m.status === 'DOWN').length;
-      const unknown = monitors.filter((m) => m.status === 'UNKNOWN').length;
-      setCurrentHealth({
-        timestamp: new Date().toISOString(),
-        upCount: up,
-        downCount: down,
-        unknownCount: unknown,
-        totalCount: total,
-      });
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [monitors]);
+    } else {
+      if (currentBand) {
+        bands.push(currentBand);
+        currentBand = null;
+      }
+    }
+  }
+  if (currentBand) bands.push(currentBand);
 
-  // Fetch historical snapshots
+  return (
+    <g>
+      {bands.map((band, i) => (
+        <rect
+          key={i}
+          x={band.x}
+          y={0}
+          width={band.width}
+          height={300}
+          fill="url(#hatch-unknown)"
+          opacity={0.4}
+        />
+      ))}
+    </g>
+  );
+}
+
+// ── Main Component ────────────────────────────────────────────────────────────
+
+function HeartbeatChart({ monitors }: Props) {
+  const [history, setHistory] = useState<HealthPoint[]>([]);
+  const [firstFetchDone, setFirstFetchDone] = useState(false);
+  const [tooltip, setTooltip] = useState<TooltipState>({
+    visible: false,
+    x: 0,
+    y: 0,
+    row: null,
+    expanded: false,
+  });
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Fetch aggregate health history
   useEffect(() => {
     const fetchHistory = async () => {
       try {
-        const res = await fetch('/api/monitors/aggregate/health?limit=60');
-        if (!res.ok) throw new Error('Failed to fetch health trend');
+        const res = await fetch('/api/monitors/aggregate/health?window=4&bucket=5');
+        if (!res.ok) return;
         const json = await res.json();
         setHistory(json.data ?? []);
-      } catch (e) {
-        console.error('[HeartbeatChart] Failed to load history:', e);
-      } finally {
-        setLoading(false);
+        setFirstFetchDone(true);
+      } catch {
+        // non-fatal
       }
     };
-
     fetchHistory();
-    const interval = setInterval(fetchHistory, MONITOR_MS + POLL_BUFFER_MS);
+    const interval = setInterval(fetchHistory, 120_000);
     return () => clearInterval(interval);
   }, []);
 
-  // Convert HealthPoints → ChartRows (epoch ms), merge with live point, insert gap breaks
-  const { chartData, domainMin, domainMax, xTicks, gapRegions, isSinglePoint, hasUnknownData } = useMemo(() => {
-    const base: ChartRow[] = history.map((p) => ({
-      t: new Date(p.timestamp).getTime(),
-      up: p.upCount,
-      unknown: p.unknownCount,
-      down: p.downCount,
-      totalCount: p.totalCount,
-      timestamp: p.timestamp,
-      isSynthetic: false,
-    }));
-
-    // Merge live point
-    if (currentHealth) {
-      const liveT = new Date(currentHealth.timestamp).getTime();
-      const liveRow: ChartRow = {
-        t: liveT,
-        up: currentHealth.upCount,
-        unknown: currentHealth.unknownCount,
-        down: currentHealth.downCount,
-        totalCount: currentHealth.totalCount,
-        timestamp: currentHealth.timestamp,
-        isSynthetic: true,
-      };
-
-      if (base.length > 0) {
-        const latestT = base[base.length - 1].t;
-        // Replace last point if within 2 min (same bucket)
-        if (liveT - latestT < 120_000) {
-          base[base.length - 1] = liveRow;
-        } else {
-          base.push(liveRow);
-        }
-      } else {
-        base.push(liveRow);
-      }
-    }
-
-    if (base.length === 0) {
-      return { chartData: [], domainMin: 0, domainMax: 0, xTicks: [], gapRegions: [], isSinglePoint: false };
-    }
-
-    // Debug: verify data sums
-    console.log('[HeartbeatChart] First 3 data points:', base.slice(0, 3).map(d => ({
-      up: d.up,
-      down: d.down,
-      unknown: d.unknown,
-      total: d.totalCount,
-      sum: (d.up ?? 0) + (d.down ?? 0) + (d.unknown ?? 0),
-      matches: (d.up ?? 0) + (d.down ?? 0) + (d.unknown ?? 0) === d.totalCount
-    })));
-
-    // Gap threshold: 3× the nominal poll interval
-    const gapThresholdMs = (MONITOR_MS + POLL_BUFFER_MS) * 3;
-    const withBreaks = insertGapBreaks(base, gapThresholdMs);
-    const gaps = findGapRegions(withBreaks);
-
-    // Check if unknown line should be rendered (has any non-zero values)
-    const hasUnknownData = base.some(d => (d.unknown ?? 0) > 0);
-
-    const isSingle = base.length === 1;
-    const rawMin = base[0].t;
-    const rawMax = base[base.length - 1].t;
-
-    // For a single point: pad ±5 min so it doesn't render at the chart edge
-    const dMin = isSingle ? rawMin - 5 * 60_000 : rawMin;
-    const dMax = isSingle ? rawMax + 5 * 60_000 : rawMax;
-
-    const ticks = generateTicks(dMin, dMax, 6);
-
+  // Synthetic current-health point from live monitor props
+  const currentHealth = useMemo<ChartRow | null>(() => {
+    if (monitors.length === 0) return null;
+    const up = monitors.filter(m => m.status === 'UP').length;
+    const down = monitors.filter(m => m.status === 'DOWN').length;
+    const unknown = monitors.filter(m => m.status === 'UNKNOWN').length;
+    const total = monitors.length;
     return {
-      chartData: withBreaks,
-      domainMin: dMin,
-      domainMax: dMax,
-      xTicks: ticks,
-      gapRegions: gaps,
-      isSinglePoint: isSingle,
-      hasUnknownData,
+      t: Date.now(),
+      upRate: total > 0 ? Math.round((up / total) * 100) : null,
+      downRate: total > 0 ? Math.round((down / total) * 100) : null,
+      unknownRate: total > 0 ? Math.round((unknown / total) * 100) : null,
+      up,
+      down,
+      unknown,
+      totalCount: total,
+      isSynthetic: true,
     };
+  }, [monitors]);
+
+  const toggleExpand = useCallback(() => {
+    setTooltip(prev => ({ ...prev, expanded: !prev.expanded }));
+  }, []);
+
+  const { chartData, hasUnknownData, isSinglePoint } = useMemo(() => {
+    const base: ChartRow[] = history.map((h) => {
+      const total = h.total || 0;
+      return {
+        t: h.t,
+        upRate: toRate(h.up, total),
+        downRate: toRate(h.down, total),
+        unknownRate: toRate(h.unknown, total),
+        up: h.up,
+        down: h.down,
+        unknown: h.unknown,
+        totalCount: h.total,
+        healthScore: h.healthScore,
+        avgLatency: h.avgLatency,
+        p95Latency: h.p95Latency,
+        errorBreakdown: h.errorBreakdown,
+        timestamp: h.timestamp,
+      };
+    });
+
+    if (currentHealth) {
+      base.push(currentHealth);
+    }
+
+    const hasUnknownData = base.some(r => (r.unknown ?? 0) > 0);
+    const isSinglePoint = base.length === 1;
+
+    return { chartData: base, hasUnknownData, isSinglePoint };
   }, [history, currentHealth]);
 
-  // ── Render states ──────────────────────────────────────────────────────────
-
-  const Header = (
-    <div className="chart-header">
-      <div className="chart-title">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2">
-          <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-        </svg>
-        System Heartbeat
-      </div>
-      <div className="chart-legend">
-        <div className="legend-item">
-          <div className="legend-dot" style={{ background: '#22c55e' }} />
-          Up
-        </div>
-        {hasUnknownData && (
-          <div className="legend-item">
-            {/* dashed indicator for unknown */}
-            <svg width="16" height="4" style={{ marginRight: 4 }}>
-              <line x1="0" y1="2" x2="16" y2="2" stroke="#eab308" strokeWidth="2" strokeDasharray="4 2" />
-            </svg>
-            Unknown
-          </div>
-        )}
-        <div className="legend-item">
-          <div className="legend-dot" style={{ background: '#ef4444' }} />
-          Down
-        </div>
-      </div>
-    </div>
-  );
-
-  if (loading) {
+  // Shimmer gate
+  if (!firstFetchDone) {
     return (
-      <div className="chart-section animate-fade">
-        {Header}
-        <div className="h-[140px] flex items-center justify-center text-[#555a72] text-sm">
-          Loading trend data…
+      <div className="dash-section">
+        <div className="section-header">
+          <div className="section-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+            Health Trend
+          </div>
         </div>
+        <div className="chart-skeleton" />
       </div>
     );
   }
 
-  if (monitors.length === 0) {
+  if (chartData.length === 0) {
     return (
-      <div className="chart-section animate-fade">
-        <div className="chart-header">
-          <div className="chart-title">System Heartbeat</div>
+      <div className="dash-section">
+        <div className="section-header">
+          <div className="section-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+            Health Trend
+          </div>
         </div>
-        <div className="h-[140px] flex items-center justify-center text-[#555a72] text-sm">
-          No monitors configured. Add endpoints to see health trends.
+        <div className="empty-section">
+          <p>No health data available.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="chart-section animate-fade">
-      {Header}
+    <div className="dash-section" ref={containerRef}>
+      <div className="section-header">
+        <div className="section-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+          </svg>
+          Health Trend
+        </div>
+      </div>
 
-      <ResponsiveContainer width="100%" height={140}>
-        <ComposedChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#2a2e3d" vertical={false} />
+      <div className="chart-wrapper">
+        <ResponsiveContainer width="100%" height={260}>
+          <ComposedChart
+            data={chartData}
+            animationDuration={0}
+            animationEasing="linear"
+            margin={{ top: 8, right: 8, bottom: 8, left: 0 }}
+            onClick={(state: any) => {
+              if (state && state.activePayload && state.activePayload[0]) {
+                const payload = state.activePayload[0].payload as ChartRow;
+                setTooltip({
+                  visible: true,
+                  x: state.chartX + 12,
+                  y: state.chartY - 12,
+                  row: payload,
+                  expanded: false,
+                });
+              } else {
+                setTooltip(prev => ({ ...prev, visible: false }));
+              }
+            }}
+          >
+            <ChartDefs />
 
-          <XAxis
-            dataKey="t"
-            type="number"
-            scale="time"
-            domain={[domainMin, domainMax]}
-            ticks={xTicks}
-            tickFormatter={(ms: number) =>
-              new Date(ms).toLocaleTimeString('en-US', {
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false,
-              })
-            }
-            stroke="#555a72"
-            tick={{ fontSize: 11, fill: '#8b90a7' }}
-          />
+            <CartesianGrid strokeDasharray="3 3" stroke={C.border()} vertical={false} />
 
-          <YAxis
-            stroke="#555a72"
-            tick={{ fontSize: 11, fill: '#8b90a7' }}
-            allowDecimals={false}
-            width={28}
-          />
-
-          <Tooltip content={<CustomTooltip />} />
-
-          {/* Gray shading over gap regions */}
-          {gapRegions.map((g, i) => (
-            <ReferenceArea
-              key={i}
-              x1={g.x1}
-              x2={g.x2}
-              fill="#2a2e3d"
-              fillOpacity={0.5}
-              strokeOpacity={0}
+            <XAxis
+              dataKey="t"
+              type="category"
+              tickFormatter={(ms: number) =>
+                new Date(ms).toLocaleTimeString('en-US', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  hour12: false,
+                })
+              }
+              stroke={C.textMut()}
+              tick={{ fontSize: 11, fill: C.textSec() }}
             />
-          ))}
 
-          {/* Up — solid green */}
-          <Line
-            type="linear"
-            dataKey="up"
-            stroke="#22c55e"
-            strokeWidth={2}
-            dot={isSinglePoint ? { r: 4, fill: '#22c55e', strokeWidth: 0 } : false}
-            activeDot={{ r: 4 }}
-            connectNulls={false}
-            isAnimationActive={false}
-          />
+            <YAxis
+              domain={[0, 100]}
+              tickFormatter={(v: number) => `${v}%`}
+              stroke={C.textMut()}
+              tick={{ fontSize: 11, fill: C.textSec() }}
+              width={40}
+            />
 
-          {/* Unknown — dashed yellow (only render if has data) */}
-          {hasUnknownData && (
-            <Line
-              type="linear"
-              dataKey="unknown"
-              stroke="#eab308"
+            {/* Unknown % — rendered first so it sits behind */}
+            {hasUnknownData && (
+              <Area
+                type="monotoneX"
+                dataKey="unknownRate"
+                stroke={C.unknown()}
+                strokeWidth={1}
+                fill="url(#grad-unknown)"
+                dot={false}
+                activeDot={false}
+                connectNulls={false}
+                isAnimationActive={false}
+                aria-label="Percentage of monitors unknown over time"
+              />
+            )}
+
+            {/* Up % */}
+            <Area
+              type="monotoneX"
+              dataKey="upRate"
+              stroke={C.up()}
               strokeWidth={2}
-              strokeDasharray="4 2"
-              strokeOpacity={0.8}
-              dot={isSinglePoint ? { r: 4, fill: '#eab308', strokeWidth: 0 } : false}
-              activeDot={{ r: 4 }}
+              fill="url(#grad-up)"
+              dot={false}
+              activeDot={{ r: 3, fill: C.up(), strokeWidth: 0 }}
               connectNulls={false}
               isAnimationActive={false}
+              aria-label="Percentage of monitors up over time"
             />
-          )}
 
-          {/* Down — solid red */}
-          <Line
-            type="linear"
-            dataKey="down"
-            stroke="#ef4444"
-            strokeWidth={2}
-            dot={isSinglePoint ? { r: 4, fill: '#ef4444', strokeWidth: 0 } : false}
-            activeDot={{ r: 4 }}
-            connectNulls={false}
-            isAnimationActive={false}
-          />
-        </ComposedChart>
-      </ResponsiveContainer>
+            {/* Down % — spike dots on non-zero buckets */}
+            <Area
+              type="monotoneX"
+              dataKey="downRate"
+              stroke={C.down()}
+              strokeWidth={2}
+              fill="url(#grad-down)"
+              dot={false}
+              activeDot={{ r: 4, fill: C.down(), strokeWidth: 0 }}
+              connectNulls={false}
+              isAnimationActive={false}
+              aria-label="Percentage of monitors down over time"
+            />
+
+            <Customized
+              component={(props: any) => (
+                <HatchBands
+                  formattedGraphicalItems={props.formattedGraphicalItems}
+                  offset={props.offset}
+                />
+              )}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+
+        <TooltipCard
+          state={tooltip}
+          containerRef={containerRef}
+          onToggleExpand={toggleExpand}
+        />
+      </div>
     </div>
   );
 }
+
+export default React.memo(HeartbeatChart);
+

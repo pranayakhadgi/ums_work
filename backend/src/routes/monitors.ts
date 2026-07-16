@@ -14,7 +14,8 @@ import { pingUrl } from '../services/pinger';
 import { inferEnvironment } from '../utils/environment';
 import { checkResults } from '../db/schema';
 import { db } from '../db';
-import { desc } from 'drizzle-orm';
+import { desc, gte, asc } from 'drizzle-orm';
+import { calculateHealthScore } from '../services/healthScore';
 
 const router = Router();
 
@@ -71,62 +72,108 @@ router.get('/:id/history', async (req, res) => {
   }
 });
 
-// GET /api/monitors/aggregate/health - last N checks across all monitors
+// GET /api/monitors/aggregate/health
+// Query params:
+//   ?window=N  — look-back in hours, default 4, max 24
+//   ?bucket=N  — bucket width in minutes, default 5, max 60
+// Returns ONLY buckets that contain at least one check (sparse).
+// Field names match frontend contracts: up, down, unknown, total, t, timestamp, etc.
 router.get('/aggregate/health', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit as string) || 60;
-    const safelimit = Math.min(limit, 200); //sets the boundary for the aggregate
+    const windowHours  = Math.min(24, Math.max(1, parseInt(String(req.query.window  ?? '4'),  10) || 4));
+    const bucketMinutes = Math.min(60, Math.max(1, parseInt(String(req.query.bucket ?? '5'),  10) || 5));
+    const bucketMs = bucketMinutes * 60_000;
 
-    const checks = await db.select({
-      checkedAt: checkResults.checkedAt, 
-      status: checkResults.status
-    }).from(checkResults).orderBy(desc(checkResults.checkedAt)).limit(safelimit);
+    const now = Date.now();
+    const windowStart = new Date(now - windowHours * 60 * 60 * 1000);
 
-    // aggregate by minute bucket. keep all three status buckets so the frontend
-    // can render a true stacked area instead of a derived percentage.
-    const aggregated = new Map<string, {
-      time: Date;
+    // Fetch all checks in the window, ascending
+    const rawChecks = await db
+      .select({
+        checkedAt:    checkResults.checkedAt,
+        status:       checkResults.status,
+        responseTimeMs: checkResults.responseTimeMs,
+        errorCategory:  checkResults.errorCategory,
+        monitorId:    checkResults.monitorId,
+      })
+      .from(checkResults)
+      .where(gte(checkResults.checkedAt, windowStart))
+      .orderBy(asc(checkResults.checkedAt));
+
+    // Aggregate into sparse buckets keyed by floor(ts / bucketMs)
+    const bucketMap = new Map<number, {
+      key: number;
       up: number;
       down: number;
       unknown: number;
       total: number;
+      latencies: number[];
+      degradedChecks: number;
+      errorCategories: string[];
     }>();
 
-    for (const check of checks) {
-      const time = new Date(check.checkedAt);
-      time.setSeconds(0, 0);
-      const key = time.toISOString();
+    for (const check of rawChecks) {
+      const ts  = new Date(check.checkedAt).getTime();
+      const key = Math.floor(ts / bucketMs) * bucketMs;
 
-      const existing = aggregated.get(key);
-      if (existing) {
-        existing.total++;
-        if (check.status === 'UP') existing.up++;
-        else if (check.status === 'DOWN') existing.down++;
-        else if (check.status === 'UNKNOWN') existing.unknown++;
-      } else {
-        aggregated.set(key, {
-          time,
-          up: check.status === 'UP' ? 1 : 0,
-          down: check.status === 'DOWN' ? 1 : 0,
-          unknown: check.status === 'UNKNOWN' ? 1 : 0,
-          total: 1,
-        });
+      if (!bucketMap.has(key)) {
+        bucketMap.set(key, { key, up: 0, down: 0, unknown: 0, total: 0, latencies: [], degradedChecks: 0, errorCategories: [] });
+      }
+      const b = bucketMap.get(key)!;
+      b.total++;
+
+      if      (check.status === 'UP')   b.up++;
+      else if (check.status === 'DOWN') b.down++;
+      else                              b.unknown++;
+
+      if (check.responseTimeMs != null) b.latencies.push(check.responseTimeMs);
+
+      if (check.errorCategory != null) {
+        b.errorCategories.push(check.errorCategory);
+        if (check.status === 'UP') b.degradedChecks++;
       }
     }
 
-    const sorted = Array.from(aggregated.values())
-      .sort((a, b) => a.time.getTime() - b.time.getTime())
-      .map((b) => ({
-        timestamp: b.time.toISOString(),
-        // keep healthscore for any existing consumers
-        healthScore: b.total > 0 ? Math.round((b.up / b.total) * 100) : 0,
-        upCount: b.up,
-        downCount: b.down,
-        unknownCount: b.unknown,
-        totalCount: b.total,
-      }));
+    // Build response — only buckets with data, sorted ascending
+    const data = Array.from(bucketMap.values())
+      .sort((a, b) => a.key - b.key)
+      .map((b) => {
+        const scoreResult = calculateHealthScore({
+          latencies:     b.latencies,
+          degradedChecks: b.degradedChecks,
+          downChecks:    b.down,
+          totalChecks:   b.total,
+        });
 
-    res.json({ data: sorted });
+        const avgLatency = b.latencies.length > 0
+          ? Math.round(b.latencies.reduce((a, c) => a + c, 0) / b.latencies.length)
+          : 0;
+
+        const sortedLat = [...b.latencies].sort((a, c) => a - c);
+        const p95Latency = sortedLat.length > 0
+          ? sortedLat[Math.floor(sortedLat.length * 0.95)]
+          : 0;
+
+        const totalUp = b.total - b.down;
+        const degradedRate = totalUp > 0 ? Math.round((b.degradedChecks / totalUp) * 100) : 0;
+        const downRate = b.total > 0 ? Math.round((b.down / b.total) * 100) : 0;
+
+        return {
+          timestamp: new Date(b.key).toISOString(),
+          t: b.key,
+          up: b.up,
+          down: b.down,
+          unknown: b.unknown,
+          total: b.total,
+          healthScore: scoreResult.score,
+          avgLatency,
+          p95Latency,
+          degradedRate,
+          downRate,
+        };
+      });
+
+    res.json({ data });
   } catch (error) {
     console.error('[monitors] GET /aggregate/health error:', error);
     res.status(500).json({ error: 'Failed to fetch aggregate health' });
@@ -154,7 +201,6 @@ router.post('/', async (req, res) => {
         details: parsed.error.flatten().fieldErrors,
       });
     }
-
     const { name, url, environment, discoveredAppId } = parsed.data;
     const monitor = await createMonitor({
       name,
@@ -162,67 +208,10 @@ router.post('/', async (req, res) => {
       environment: environment ?? (url ? inferEnvironment(url) : 'Dev'),
       discoveredAppId,
     });
-
     res.status(201).json(monitor);
   } catch (error) {
     console.error('[monitors] POST / error:', error);
     res.status(500).json({ error: 'Failed to create monitor' });
-  }
-});
-
-// POST /api/monitors/bulk — parallel with bounded concurrency
-router.post('/bulk', async (req, res) => {
-  try {
-    const { monitors: items } = req.body;
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'monitors array is required' });
-    }
-
-    const validationResults = items.map((item, index) => ({
-      index,
-      parsed: bulkItemSchema.safeParse(item),
-    }));
-
-    const failures = validationResults
-      .filter((r) => !r.parsed.success)
-      .map((r) => ({
-        index: r.index,
-        errors: r.parsed.error!.flatten().fieldErrors,
-      }));
-
-    if (failures.length > 0) {
-      return res.status(400).json({
-        error: 'Some items failed validation',
-        failures,
-      });
-    }
-
-    const validItems = validationResults
-      .filter((r) => r.parsed.success)
-      .map((r) => r.parsed.data!);
-
-    const { default: pLimit } = await import('p-limit');
-    const limit = pLimit(5);
-
-    const results = await Promise.all(
-      validItems.map((item) =>
-        limit(async () => {
-          const { name, url } = item;
-          const pingResult = await pingUrl(url);
-          const monitor = await createMonitor({
-            name,
-            url,
-            environment: inferEnvironment(url),
-          });
-          return updateMonitorStatus(monitor.id, pingResult);
-        })
-      )
-    );
-
-    res.status(201).json(results);
-  } catch (error) {
-    console.error('[monitors] POST /bulk error:', error);
-    res.status(500).json({ error: 'Failed to bulk create monitors' });
   }
 });
 
@@ -236,7 +225,6 @@ router.patch('/:id/enable', async (req, res) => {
         details: parsed.error.flatten().fieldErrors,
       });
     }
-
     const updated = await toggleMonitor(req.params.id, parsed.data.enabled);
     if (!updated) return res.status(404).json({ error: 'Monitor not found' });
     res.json({ monitor: updated });
