@@ -11,8 +11,8 @@ export default function StatusBento({ up, down, unknown, total }: Props) {
     { 
       label: 'Online', 
       value: up, 
-      color: 'var(--up)', 
-      dim: 'var(--up-dim)', 
+      color: 'var(--status-up)', 
+      dim: 'var(--status-up-bg)', 
       glow: 'var(--up-glow)',
       icon: (
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -23,8 +23,8 @@ export default function StatusBento({ up, down, unknown, total }: Props) {
     { 
       label: 'Offline', 
       value: down, 
-      color: 'var(--down)', 
-      dim: 'var(--down-dim)', 
+      color: 'var(--status-down)', 
+      dim: 'var(--status-down-bg)', 
       glow: 'var(--down-glow)',
       icon: (
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -35,8 +35,8 @@ export default function StatusBento({ up, down, unknown, total }: Props) {
     { 
       label: 'Unknown', 
       value: unknown, 
-      color: 'var(--unknown)', 
-      dim: 'var(--unknown-dim)', 
+      color: 'var(--status-unknown)', 
+      dim: 'var(--status-unknown-bg)', 
       glow: 'var(--unknown-glow)',
       icon: (
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -86,23 +86,7 @@ export default function StatusBento({ up, down, unknown, total }: Props) {
             {card.label === 'Unknown' && 'Awaiting first check'}
             {card.label === 'Total' && 'Endpoints tracked'}
           </div>
-          {card.label === 'Total' && <Sparkline />}
         </div>
-      ))}
-    </div>
-  );
-}
-
-function Sparkline() {
-  const bars = [60, 40, 80, 30, 70, 50, 90, 20, 45, 65, 35, 75];
-  return (
-    <div className="sparkline">
-      {bars.map((h, i) => (
-        <div 
-          key={i} 
-          className="spark-bar" 
-          style={{ height: `${h}%` }}
-        />
       ))}
     </div>
   );
