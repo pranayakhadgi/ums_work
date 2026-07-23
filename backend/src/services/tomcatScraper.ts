@@ -1,24 +1,12 @@
-// backend/src/services/tomcatScraper.ts
-import * as fs from 'fs';
-import * as path from 'path';
+/**
+ * Tomcat Manager scraper.
+ * Parses /text/list, /status?XML=true, and /text/vminfo endpoints.
+ */
 import { Agent } from 'https';
 import { clearTimeout } from 'timers';
 import { XMLParser } from 'fast-xml-parser';
+import { tomcatInstances } from '../db/schema';
 
-// env vars may be set after import in tests, so read them per call
-function getEnv() {
-    return {
-        useTestFile: process.env.USE_TEST_FILE === 'true',
-        tomcatUser: process.env.TOMCAT_USER || '',
-        tomcatPass: process.env.TOMCAT_PASS || '',
-        scheme: process.env.TOMCAT_SCHEME || 'https',
-        host: process.env.TOMCAT_HOST || 'localhost',
-        port: process.env.TOMCAT_PORT || '8443',
-        managerPath: process.env.TOMCAT_MANAGER_PATH || '/synctl',
-    };
-}
-
-// setting the return value with ternary default as 0 will predent the downstream math to break.
 function safeInt(value: unknown, defaultValue = 0): number {
     if (typeof value === 'number') return value;
     if(typeof value === 'string') {
@@ -28,7 +16,6 @@ function safeInt(value: unknown, defaultValue = 0): number {
     return defaultValue;
 }
 
-//same logic applies to the float datatype as well
 function safeFloat(value: unknown, defaultValue = 0): number {
     if (typeof value === 'number') return value;
     if(typeof value === 'string') {
@@ -40,6 +27,14 @@ function safeFloat(value: unknown, defaultValue = 0): number {
 
 const httpsAgent = new Agent({ rejectUnauthorized: false });
 
+/**
+ * Type for a Tomcat instance row from the database
+ */
+export type TomcatInstance = typeof tomcatInstances.$inferSelect;
+
+/**
+ * Represents an application discovered on a Tomcat instance.
+ */
 export interface DiscoveredApp {
     contextPath: string;
     state: string;
@@ -47,6 +42,9 @@ export interface DiscoveredApp {
     displayName: string;
 }
 
+/**
+ * Represents health and usage metrics for a specific Tomcat connector.
+ */
 export interface ConnectorHealth {
     name: string;
     threadInfo: {
@@ -65,6 +63,9 @@ export interface ConnectorHealth {
     };
 }
 
+/**
+ * Represents comprehensive health and configuration data for a Tomcat instance.
+ */
 export interface InstanceHealth {
     serverInfo: {
         tomcatVersion: string;
@@ -81,6 +82,9 @@ export interface InstanceHealth {
     raw: string;
 }
 
+/**
+ * Represents a snapshot of the Java Virtual Machine metrics and information.
+ */
 export interface JvmSnapshot {
     runtimeInfo: {
         vmName: string;
@@ -112,41 +116,25 @@ export interface JvmSnapshot {
 
 
 
-async function tomcatFetch(pathSuffix: string, retries = 3): Promise<string> {
-    const env = getEnv();
-
-    if (env.useTestFile) {
-        const fileMap: Record<string, string> = {
-            '/text/list': 'test-list.txt',
-            '/status?XML=true': 'test-status.txt',
-            '/text/vminfo': 'test-vminfo.txt',
-        };
-        const fileName = fileMap[pathSuffix];
-        if (!fileName) throw new Error(`Time out! No test file mapped for ${pathSuffix}`);
-
-        const filePath = path.join(process.cwd(), 'test-data', fileName);
-        if (!fs.existsSync(filePath)) {
-            throw new Error(`Test file not found: ${filePath}`);//can I add retryable errors here?
-        }
-        return fs.readFileSync(filePath, 'utf-8');
-    }
-
-    const url = `${env.scheme}://${env.host}:${env.port}${env.managerPath}${pathSuffix}`;
-    const auth = Buffer.from(`${env.tomcatUser}:${env.tomcatPass}`).toString('base64');//encryption
+export async function tomcatFetch(pathSuffix: string, instance: TomcatInstance, retries = 3): Promise<string> {
+    // instance.managerUrl is stored without a trailing slash (see normalizeManagerUrl),
+    // and pathSuffix is passed with a leading slash by convention (e.g. '/text/list').
+    // A leading-slash reference passed to `new URL()` replaces the ENTIRE base path
+    // instead of joining to it, so we normalize both sides before constructing the URL.
+    const base = instance.managerUrl.endsWith('/') ? instance.managerUrl : `${instance.managerUrl}/`;
+    const suffix = pathSuffix.startsWith('/') ? pathSuffix.slice(1) : pathSuffix;
+    const url = new URL(suffix, base).href;
+    const auth = Buffer.from(`${instance.managerUser}:${instance.managerPass}`).toString('base64');
 
      let lastError: Error | undefined;
 
-     //setting three retries during fetch error, prevents the monitor from failing immediately
      for ( let attempt = 1; attempt <= retries; attempt++){
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
         try {
-            // Native fetch with custom agent for Node 18+
             const response = await fetch(url, {
                 headers: { Authorization: `Basic ${auth}` },
-                // @ts-ignore — Node 18+ fetch accepts dispatcher/agent
-                // dispatcher: env.scheme === 'https' ? httpsAgent : undefined,
                 signal: controller.signal,
             });
 
@@ -154,7 +142,6 @@ async function tomcatFetch(pathSuffix: string, retries = 3): Promise<string> {
 
             if(!response.ok) {
                 const body = await response.text().catch(() => '');
-                //a proper error log with the first 200 lines of the body that caused the error
                 throw new Error(`HTTP ${response.status}: ${response.statusText} at ${url}: ${body.substring(0, 200)}`);
             }
 
@@ -166,12 +153,6 @@ async function tomcatFetch(pathSuffix: string, retries = 3): Promise<string> {
                 code: error.code,
                 message: error.message,
                 cause: error.cause?.message,
-            });
-            console.log("[tomcatFetch] Final URL:", url);
-            console.log("[tomcatFetch] Config:", {
-                host: process.env.TOMCAT_HOST,
-                port: process.env.TOMCAT_PORT,
-                protocol: process.env.TOMCAT_PROTOCOL,
             });
             lastError = error;
 
@@ -203,11 +184,15 @@ async function tomcatFetch(pathSuffix: string, retries = 3): Promise<string> {
 
 
 
+/**
+ * Parses raw application list text from the Tomcat Manager.
+ * @param raw - Raw /text/list response body
+ * @returns Parsed application entries
+ */
 export function parseAppList(raw: string): DiscoveredApp[] {
     const lines = raw.split('\n').filter(l => l.trim());
     const apps: DiscoveredApp[] = [];
 
-    //prevents the header validation breakage silent failure warning the dev
     const header = lines[0]?.trim();
     if (!header?.startsWith('OK - Listed applications')) {
         console.warn('[parseAppList] Unexpected header:', header?.substring(0, 100));
@@ -320,6 +305,12 @@ function parseStatusXml(raw: string): InstanceHealth {
     return result;
 }
 
+/**
+ * Parses raw status response from Tomcat into structured health data.
+ * Supports both XML and plain text formats.
+ * @param raw - Raw /status response body
+ * @returns Parsed instance health
+ */
 export function parseStatus(raw: string): InstanceHealth {
     const trimmed = raw.trim();
     if (trimmed.startsWith('<?xml>') || trimmed.startsWith('<status')) {
@@ -328,6 +319,11 @@ export function parseStatus(raw: string): InstanceHealth {
     return parseStatusText(raw);
 }
 
+/**
+ * Parses raw plain text status response from Tomcat.
+ * @param raw - Raw plain-text /status response body
+ * @returns Parsed instance health
+ */
 export function parseStatusText(raw: string): InstanceHealth {
     const lines = raw.split('\n');
 
@@ -389,6 +385,11 @@ export function parseStatusText(raw: string): InstanceHealth {
     return result;
 }
 
+/**
+ * Parses raw JVM info text into a structured JVM snapshot.
+ * @param raw - Raw /text/vminfo response body
+ * @returns Parsed JVM snapshot
+ */
 export function parseVminfo(raw: string): JvmSnapshot {
     const lines = raw.split('\n');
     const result: JvmSnapshot = {
@@ -490,17 +491,32 @@ function parseMemory(value: string): number {
     return num;
 }
 
-export async function discoverApps(): Promise<DiscoveredApp[]> {
-    const raw = await tomcatFetch('/text/list');
+/**
+ * Discovers applications deployed on the configured Tomcat instance.
+ * @param instance - Tomcat instance configuration
+ * @returns Parsed application list from /text/list
+ */
+export async function discoverApps(instance: TomcatInstance): Promise<DiscoveredApp[]> {
+    const raw = await tomcatFetch('/text/list', instance);
     return parseAppList(raw);
 }
 
-export async function fetchInstanceHealth(): Promise<InstanceHealth> {
-    const raw = await tomcatFetch('/status?XML=true');
+/**
+ * Fetches and parses instance health metrics from /status?XML=true.
+ * @param instance - Tomcat instance configuration
+ * @returns Parsed instance health snapshot
+ */
+export async function fetchInstanceHealth(instance: TomcatInstance): Promise<InstanceHealth> {
+    const raw = await tomcatFetch('/status?XML=true', instance);
     return parseStatus(raw);
 }
 
-export async function fetchJvmSnapshot(): Promise<JvmSnapshot> {
-    const raw = await tomcatFetch('/text/vminfo');
+/**
+ * Fetches and parses a snapshot of JVM metrics from /text/vminfo.
+ * @param instance - Tomcat instance configuration
+ * @returns Parsed JVM snapshot
+ */
+export async function fetchJvmSnapshot(instance: TomcatInstance): Promise<JvmSnapshot> {
+    const raw = await tomcatFetch('/text/vminfo', instance);
     return parseVminfo(raw);
 }

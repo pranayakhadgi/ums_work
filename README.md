@@ -35,8 +35,8 @@ A real-time dashboard for monitoring the uptime and health of Tomcat-hosted appl
 ## Architecture
 
 ```
-┌─────────────────────┐        WebSocket / REST        ┌──────────────────────┐
-│   React 19 (Vite)   │ ◄──────────────────────────── │  Express + Node.js   │
+┌─────────────────────┐        WebSocket / REST         ┌──────────────────────┐
+│   React 19 (Vite)   │ ◄────────────────────────────   │  Express + Node.js   │
 │   TypeScript        │                                 │  TypeScript          │
 │   Zustand · Recharts│                                 │  Drizzle ORM         │
 └─────────────────────┘                                 │  better-sqlite3      │

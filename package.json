@@ -1,0 +1,22 @@
+{
+  "name": "uptime-system-monitor-demo",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Uptime Tomcat Monitor — real-time dashboard for monitoring Tomcat-hosted applications",
+  "workspaces": [
+    "backend",
+    "my-react-app"
+  ],
+  "scripts": {
+    "dev:backend": "npm -w backend run dev",
+    "dev:frontend": "npm -w my-react-app run dev",
+    "build:backend": "npm -w backend run build",
+    "build:frontend": "npm -w my-react-app run build",
+    "test": "npm -w backend run test",
+    "db:generate": "npm -w backend run db:generate",
+    "db:migrate": "npm -w backend run db:migrate",
+    "db:seed": "npm -w backend run db:seed",
+    "db:studio": "npm -w backend run db:studio",
+    "lint": "npm -w my-react-app run lint"
+  }
+}

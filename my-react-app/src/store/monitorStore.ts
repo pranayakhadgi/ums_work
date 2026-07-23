@@ -5,9 +5,9 @@ interface MonitorStore {
   monitors: Monitor[];
   loading: boolean;
   error: string | null;
-  loadMonitors: () => Promise<void>;
+  loadMonitors: (instanceId?: string) => Promise<void>;
   bulkAdd: (items: { name: string; url: string }[]) => Promise<void>;
-  discover: () => Promise<void>;
+  discover: (instanceId?: string) => Promise<void>;
 }
 
 export const useMonitorStore = create<MonitorStore>((set, get) => ({
@@ -15,10 +15,10 @@ export const useMonitorStore = create<MonitorStore>((set, get) => ({
   loading: false,
   error: null,
 
-  loadMonitors: async () => {
+  loadMonitors: async (instanceId?: string) => {
     set({ loading: true, error: null });
     try {
-      const monitors = await fetchMonitors();
+      const monitors = await fetchMonitors(instanceId);
       set({ monitors, loading: false });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : 'An unknown error occurred', loading: false });
@@ -40,10 +40,10 @@ export const useMonitorStore = create<MonitorStore>((set, get) => ({
     }
   },
 
-  discover: async () => {
+  discover: async (instanceId?: string) => {
     set({ loading: true, error: null });
     try {
-      const discovered = await discoverMonitors();
+      const discovered = await discoverMonitors(instanceId);
       const existing = get().monitors;
       const mergedMap = new Map<string, Monitor>();
       existing.forEach(m => mergedMap.set(m.id, m));

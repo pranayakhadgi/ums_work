@@ -1,4 +1,7 @@
-// backend/src/services/pinger.ts
+/**
+ * HTTP ping module.
+ * Provides functionality to ping URLs and check their availability.
+ */
 import http from 'http';
 import https from 'https';
 
@@ -17,6 +20,9 @@ const httpsAgent = new https.Agent({
   rejectUnauthorized: false,
 });
 
+/**
+ * Represents the outcome of an HTTP ping operation.
+ */
 export interface PingResult {
   status: 'UP' | 'DOWN' | 'UNKNOWN';
   checkedAt: string;
@@ -25,6 +31,12 @@ export interface PingResult {
   errorMessage?: string;
 }
 
+/**
+ * Pings a given URL to check its status and response time.
+ * @param url
+ * @param timeoutMs
+ * @returns
+ */
 export async function pingUrl(url: string, timeoutMs = 5000): Promise<PingResult> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -36,8 +48,6 @@ export async function pingUrl(url: string, timeoutMs = 5000): Promise<PingResult
     const response = await fetch(url, {
       method: 'GET',
       signal: controller.signal,
-      // @ts-ignore — Node 18+ fetch
-      // dispatcher: agent,
     });
 
     clearTimeout(timeoutId);

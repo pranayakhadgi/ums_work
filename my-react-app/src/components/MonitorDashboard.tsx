@@ -1,17 +1,18 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useMonitorStore } from '../store/monitorStore';
 import { useDiscoveryStore } from '../store/discoveryStore';
+import { useInstanceStore } from '../store/instanceStore';
 import InstanceHealth from './InstanceHealth';
 import JvmMetrics from './JvmMetrics';
 import DiscoveryPanel from './DiscoveryPanel';
 import MonitorList from './MonitorList';
-import HeartbeatChart from './HeartbeatChart';
-import MetricStrip, { type HealthBucket } from './MetricStrip';
-import StatusBento from './StatusBento';
+import HealthSummary from './HealthSummary';
 import CommandBar from './CommandBar';
+import AddInstanceModal from './AddInstanceModal';
 import './Dashboard.css';
 import { DISCOVERY_MS, MONITOR_MS, POLL_BUFFER_MS } from '../api/intervals';
-import { ChevronLeft, ChevronRight, Radio, FlaskConical, Server, Cloud, Cpu, Network, Activity, Loader2 } from 'lucide-react';
+import { ChevronDown, Plus, Loader2 } from 'lucide-react';
+import { Toaster } from 'sonner';
 
 const ClockDisplay = React.memo(() => {
   const [time, setTime] = useState(new Date());
@@ -29,8 +30,9 @@ const ClockDisplay = React.memo(() => {
 });
 
 export default function MonitorDashboard() {
-  const { monitors, loading, error, loadMonitors } = useMonitorStore();
+  const { monitors, loading, loadMonitors } = useMonitorStore();
   const { loadCandidates, candidates } = useDiscoveryStore();
+  const { instances, currentInstanceId, loadInstances, setCurrentInstance } = useInstanceStore();
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -39,51 +41,36 @@ export default function MonitorDashboard() {
   const [lastMonitorPushAt, setLastMonitorPushAt] = useState<number>(0);
   const [lastDiscoveryPushAt, setLastDiscoveryPushAt] = useState<number>(0);
   const [wsConnected, setWsConnected] = useState(false);
-  const [healthBuckets, setHealthBuckets] = useState<HealthBucket[]>([]);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [envMode, setEnvMode] = useState<string>('live');
   const [appLoading, setAppLoading] = useState(false);
+  const [showAddInstance, setShowAddInstance] = useState(false);
 
-  const handleEnvChange = (newEnv: string) => {
-    if (newEnv === envMode) return;
-    setEnvMode(newEnv);
-    setAppLoading(true);
-    setTimeout(() => {
-      setAppLoading(false);
-    }, 800);
-  };
+  const currentInstance = instances.find(i => i.id === currentInstanceId) ?? null;
 
-  const envDisplayNames: Record<string, string> = {
-    'live': 'MultiClient OLV',
-    'test': 'User Session Conduit',
-    'qa': 'WSA Stub',
-    'staging': 'Desktop Processing',
-    'dev': 'Ship Order Notification',
-    'prod-us': 'Analytics Aggregator',
-    'prod-eu': 'Payment Gateway',
-  };
-  const currentEnvName = envDisplayNames[envMode] || envMode;
-
-  useEffect(() => {
-    const fetchBuckets = async () => {
-      try {
-        const res = await fetch('/api/monitors/aggregate/health?window=4&bucket=5');
-        if (!res.ok) return;
-        const json = await res.json();
-        setHealthBuckets(json.data ?? []);
-      } catch {
-        // non-fatal — MetricStrip will just be empty
-      }
-    };
-    fetchBuckets();
-    const interval = setInterval(fetchBuckets, 120_000);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    loadMonitors();
-    loadCandidates();
+  // Fetch all data scoped to the current instance
+  const fetchAllForInstance = useCallback((instId: string | null) => {
+    const id = instId ?? undefined;
+    loadMonitors(id);
+    loadCandidates(id);
   }, [loadMonitors, loadCandidates]);
+
+  // When the selected instance changes, re-fetch all data
+  useEffect(() => {
+    fetchAllForInstance(currentInstanceId);
+  }, [currentInstanceId, fetchAllForInstance]);
+
+  const handleInstanceChange = (id: string) => {
+    if (id === currentInstanceId) return;
+    setCurrentInstance(id);
+    setAppLoading(true);
+    setTimeout(() => setAppLoading(false), 600);
+  };
+
+  // Load instances on mount
+  useEffect(() => {
+    loadInstances();
+  }, [loadInstances]);
+
+  // Initial monitors + candidates fetch is handled by the currentInstanceId effect above.
 
   useEffect(() => {
     const socket = new WebSocket('ws://localhost:3001');
@@ -91,7 +78,7 @@ export default function MonitorDashboard() {
     socket.onmessage = (event) => {
       const msg = JSON.parse(event.data);
       if (msg.type === 'CHECK_BATCH_COMPLETE' || msg.type === 'STATE_TRANSITION') {
-        loadMonitors();
+        loadMonitors(currentInstanceId ?? undefined);
         setLastMonitorPushAt(Date.now());
       }
     };
@@ -114,7 +101,7 @@ export default function MonitorDashboard() {
     };
 
     return () => socket.close();
-  }, [loadMonitors, loadCandidates]);
+  }, [loadMonitors, currentInstanceId]);
 
     useEffect(() => {
     const interval = setInterval(() => {
@@ -122,11 +109,11 @@ export default function MonitorDashboard() {
       const gracePeriod = MONITOR_MS + POLL_BUFFER_MS;
 
       if (sinceLastPush > gracePeriod) {
-        loadMonitors();
+        loadMonitors(currentInstanceId ?? undefined);
       }
     }, MONITOR_MS + POLL_BUFFER_MS);
     return () => clearInterval(interval);
-  }, [loadMonitors, lastMonitorPushAt]);
+  }, [loadMonitors, lastMonitorPushAt, currentInstanceId]);
 
     useEffect(() => {
     const interval = setInterval(() => {
@@ -134,11 +121,11 @@ export default function MonitorDashboard() {
       const gracePeriod = MONITOR_MS + POLL_BUFFER_MS;
 
       if (sinceLastPush > gracePeriod) {
-        loadCandidates();
+        loadCandidates(currentInstanceId ?? undefined);
       }
     }, DISCOVERY_MS + POLL_BUFFER_MS);
     return () => clearInterval(interval);
-  }, [loadCandidates, lastDiscoveryPushAt]);
+  }, [loadCandidates, lastDiscoveryPushAt, currentInstanceId]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
@@ -152,10 +139,6 @@ export default function MonitorDashboard() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
-
-  const upCount = monitors.filter(m => m.status === 'UP').length;
-  const downCount = monitors.filter(m => m.status === 'DOWN').length;
-  const unknownCount = monitors.filter(m => m.status === 'UNKNOWN').length;
 
   // Searchable index — filtered hits for both monitors and discovered apps
   const searchItems = useMemo(() => {
@@ -196,72 +179,11 @@ export default function MonitorDashboard() {
     }
   };
 
-  // Filter monitors based on search query (legacy — kept for backwards compat, not used by new modal)
-  const filteredMonitors = searchQuery.trim() === ''
-    ? monitors
-    : monitors.filter(m =>
-        m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        m.url.toLowerCase().includes(searchQuery.toLowerCase())
-      );
+  // (filteredMonitors removed — MonitorList receives the full monitors array;
+  //  search highlighting is handled via highlightedMonitorId)
 
   return (
     <div className="dashboard-shell">
-      <aside className={`env-sidebar ${sidebarOpen ? '' : 'collapsed'}`}>
-        <button className="env-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
-          {sidebarOpen ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
-        </button>
-        <nav className="env-nav">
-          <button 
-            className={`env-item ${envMode === 'live' ? 'active' : ''}`}
-            onClick={() => handleEnvChange('live')}
-          >
-            <Radio size={18} />
-            <span className="env-label">{envDisplayNames['live']}</span>
-          </button>
-          <button 
-            className={`env-item ${envMode === 'test' ? 'active' : ''}`}
-            onClick={() => handleEnvChange('test')}
-          >
-            <FlaskConical size={18} />
-            <span className="env-label">{envDisplayNames['test']}</span>
-          </button>
-          <button 
-            className={`env-item ${envMode === 'qa' ? 'active' : ''}`}
-            onClick={() => handleEnvChange('qa')}
-          >
-            <Server size={18} />
-            <span className="env-label">{envDisplayNames['qa']}</span>
-          </button>
-          <button 
-            className={`env-item ${envMode === 'staging' ? 'active' : ''}`}
-            onClick={() => handleEnvChange('staging')}
-          >
-            <Cloud size={18} />
-            <span className="env-label">{envDisplayNames['staging']}</span>
-          </button>
-          <button 
-            className={`env-item ${envMode === 'dev' ? 'active' : ''}`}
-            onClick={() => handleEnvChange('dev')}
-          >
-            <Cpu size={18} />
-            <span className="env-label">{envDisplayNames['dev']}</span>
-          </button>
-          <button 
-            className={`env-item ${envMode === 'prod-us' ? 'active' : ''}`}
-            onClick={() => handleEnvChange('prod-us')}
-          >
-            <Network size={18} />
-            <span className="env-label">{envDisplayNames['prod-us']}</span>
-          </button>
-          <button 
-            className={`env-item ${envMode === 'prod-eu' ? 'active' : ''}`}
-            onClick={() => handleEnvChange('prod-eu')}
-          >
-            <Activity size={18} />
-            <span className="env-label">{envDisplayNames['prod-eu']}</span>
-          </button>
-        </nav>
-      </aside>
       <div className="dashboard">
         <header className="dash-header">
           <div className="dash-header-inner">
@@ -272,6 +194,40 @@ export default function MonitorDashboard() {
                 <div className="brand-sub">Tomcat Health Dashboard</div>
               </div>
             </div>
+
+            {/* Instance selector */}
+            <div className="instance-selector">
+              <div className="instance-dropdown-wrapper">
+                <ChevronDown size={14} className="instance-chevron" aria-hidden="true" />
+                <select
+                  className="instance-select"
+                  value={currentInstanceId ?? ''}
+                  onChange={e => handleInstanceChange(e.target.value)}
+                  aria-label="Select Tomcat instance"
+                  disabled={instances.length === 0}
+                >
+                  {instances.length === 0 ? (
+                    <option value="">No instances</option>
+                  ) : (
+                    instances.map(inst => (
+                      <option key={inst.id} value={inst.id}>
+                        {inst.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+              <button
+                className="btn btn-icon"
+                onClick={() => setShowAddInstance(true)}
+                title="Add new instance"
+                aria-label="Add new instance"
+                type="button"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+
             <div className="header-right">
               <div className="live-badge">
                 <span className={`pulse-dot ${wsConnected ? 'connected' : ''}`} />
@@ -282,9 +238,11 @@ export default function MonitorDashboard() {
           </div>
         </header>
 
-        <div className="env-title-banner">
-          <h1>{currentEnvName}</h1>
-        </div>
+        {currentInstance && (
+          <div className="env-title-banner">
+            <h1>{currentInstance.name}</h1>
+          </div>
+        )}
 
         <CommandBar onClick={() => setSearchOpen(true)} />
 
@@ -292,20 +250,15 @@ export default function MonitorDashboard() {
         {appLoading ? (
           <div className="app-loading-state">
             <Loader2 size={32} className="spinner-icon" />
-            <p>Loading {currentEnvName} topology...</p>
+            <p>Loading {currentInstance?.name ?? 'instance'} topology…</p>
           </div>
         ) : (
           <>
-            <StatusBento
-              up={upCount}
-              down={downCount}
-              unknown={unknownCount}
-              total={monitors.length}
+            <HealthSummary
+              instanceId={currentInstanceId ?? undefined}
+              className="mb-6"
+              onMonitorClick={setHighlightedMonitorId}
             />
-
-            <MetricStrip buckets={healthBuckets} />
-
-            <HeartbeatChart monitors={monitors} />
 
             <MonitorList
               monitors={monitors}
@@ -385,6 +338,12 @@ export default function MonitorDashboard() {
           </div>
         </div>
       )}
+
+      {showAddInstance && (
+        <AddInstanceModal onClose={() => setShowAddInstance(false)} />
+      )}
+
+      <Toaster position="bottom-right" richColors />
       </div>
     </div>
   );

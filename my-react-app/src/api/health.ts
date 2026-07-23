@@ -1,17 +1,24 @@
 const API_BASE = '/api';
 
-export async function fetchLatestHealth() {
-    const res = await fetch(`${API_BASE}/health/latest`);
+/**
+ * Build a query string that includes instanceId when provided.
+ */
+function instanceParam(instanceId?: string): string {
+  return instanceId ? `?instanceId=${encodeURIComponent(instanceId)}` : '';
+}
+
+export async function fetchLatestHealth(instanceId?: string) {
+    const res = await fetch(`${API_BASE}/health/latest${instanceParam(instanceId)}`);
     return res.json();
 }
 
-export async function fetchLatestJvm() {
-    const res = await fetch(`${API_BASE}/jvm/latest`);
+export async function fetchLatestJvm(instanceId?: string) {
+    const res = await fetch(`${API_BASE}/jvm/latest${instanceParam(instanceId)}`);
     return res.json();
 }
 
-export async function fetchDiscoveryCandidates() {
-    const res = await fetch(`${API_BASE}/discovery/candidates`);
+export async function fetchDiscoveryCandidates(instanceId?: string) {
+    const res = await fetch(`${API_BASE}/discovery/candidates${instanceParam(instanceId)}`);
     return res.json();
 }
 

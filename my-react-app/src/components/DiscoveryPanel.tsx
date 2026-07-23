@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useDiscoveryStore, type DiscoveredApp } from '../store/discoveryStore';
 import { useMonitorStore } from '../store/monitorStore';
+import { useInstanceStore } from '../store/instanceStore';
 import { Eye, CheckCircle2 } from 'lucide-react';
 
 interface Props {
@@ -19,6 +20,7 @@ export default function DiscoveryPanel({ highlightedId, onHighlightDone }: Props
   const promoteAll = useDiscoveryStore((s) => s.promoteAll);
 
   const loadMonitors = useMonitorStore((s) => s.loadMonitors);
+  const { currentInstanceId } = useInstanceStore();
 
   const [scanning, setScanning] = useState(false);
   const [promotingAll, setPromotingAll] = useState(false);
@@ -103,14 +105,19 @@ export default function DiscoveryPanel({ highlightedId, onHighlightDone }: Props
     }
   }, [highlightedId, onHighlightDone]);
 
-  useEffect(() => { loadCandidates(); }, [loadCandidates]);
+  useEffect(() => { loadCandidates(currentInstanceId ?? undefined); }, [loadCandidates, currentInstanceId]);
 
   const handleScan = async () => {
     setScanning(true);
     // A deliberate scan resets optimistic state — fresh data coming in.
     setOptimisticPromoted(new Set());
     try {
-      const res = await fetch('/api/discovery', { method: 'POST' });
+      const body = currentInstanceId ? JSON.stringify({ instanceId: currentInstanceId }) : undefined;
+      const res = await fetch('/api/discovery', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'Scan failed' }));
         console.error('[DiscoveryPanel] Scan failed:', err);
@@ -118,7 +125,7 @@ export default function DiscoveryPanel({ highlightedId, onHighlightDone }: Props
     } catch (e) {
       console.error('[DiscoveryPanel] Scan error:', e);
     } finally {
-      await loadCandidates();
+      await loadCandidates(currentInstanceId ?? undefined);
       setScanning(false);
     }
   };
@@ -140,7 +147,7 @@ export default function DiscoveryPanel({ highlightedId, onHighlightDone }: Props
       return next;
     });
     await promoteAll(recommended);
-    loadMonitors();
+    loadMonitors(currentInstanceId ?? undefined);
     setPromotingAll(false);
   };
 
@@ -233,7 +240,7 @@ export default function DiscoveryPanel({ highlightedId, onHighlightDone }: Props
                           // Optimistic update first — row changes in-place immediately.
                           markOptimistic(app.id);
                           await promote(app);
-                          loadMonitors();
+                          loadMonitors(currentInstanceId ?? undefined);
                         }}
                         disabled={loading}
                         title="Monitor"

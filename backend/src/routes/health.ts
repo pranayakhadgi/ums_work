@@ -1,19 +1,29 @@
+/**
+ * Express router for instance health snapshots — latest per connector and historical data
+ */
 import { Router } from 'express';
 import { db } from '../db';
 import { instanceHealthSnapshots } from '../db/schema';
 import { eq, desc } from 'drizzle-orm';
+
 
 const router = Router();
 
 // GET /api/health/latest — latest snapshot per connector
 router.get('/latest', async (req, res) => {
     try {
-        //fetch last 50 snapshots, then deduplicate in memory
-        const rows = await db
+        const { instanceId } = req.query;
+
+        // Fetch last 50 snapshots (filtered by instance if provided), then deduplicate by connector in memory
+        const query = db
             .select()
             .from(instanceHealthSnapshots)
             .orderBy(desc(instanceHealthSnapshots.collectedAt))
             .limit(50);
+
+        const rows = instanceId && typeof instanceId === 'string'
+            ? await query.where(eq(instanceHealthSnapshots.instanceId, instanceId))
+            : await query;
 
         // Keep only the latest per connector
         const latestMap = new Map<string, typeof rows[number]>();

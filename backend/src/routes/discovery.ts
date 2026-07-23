@@ -1,41 +1,53 @@
-// backend/src/routes/discovery.ts
+/**
+ * Express router for Tomcat app discovery, candidate listing, and debug endpoints
+ */
 import { Router } from 'express';
 import { db } from '../db';
-import { discoveredApps } from '../db/schema';
+import { discoveredApps, tomcatInstances } from '../db/schema';
 import { eq, desc, and } from 'drizzle-orm';
-import { discoverApps, fetchInstanceHealth, fetchJvmSnapshot } from '../services/tomcatScraper';
+import { discoverApps, fetchInstanceHealth, fetchJvmSnapshot, TomcatInstance } from '../services/tomcatScraper';
 import { randomUUID } from 'crypto';
-import { getOrCreateDefaultInstance } from '../data/instances';
+import { z } from 'zod';
 
 const router = Router();
 
-function getEnv() {
-  return {
-    promote: process.env.AUTO_PROMOTE || '',
-  };
-}
 
 // POST /api/discovery — trigger scan, return discovered apps
 router.post('/', async (req, res) => {
   const startTime = Date.now();
 
   try {
-    const apps = await discoverApps();
+    const schema = z.object({
+      instanceId: z.string().optional(),
+    });
+    const { instanceId: requestedInstanceId } = schema.parse(req.body);
 
-    const instance = await getOrCreateDefaultInstance();
-    const instanceId = instance.id;
+    let instance: TomcatInstance;
+    if (requestedInstanceId) {
+      const instances = await db.select().from(tomcatInstances).where(eq(tomcatInstances.id, requestedInstanceId));
+      if (instances.length === 0) {
+        return res.status(404).json({ error: 'Instance not found' });
+      }
+      instance = instances[0];
+    } else {
+      const instances = await db.select().from(tomcatInstances).where(eq(tomcatInstances.isActive, true));
+      if (instances.length === 0) {
+        return res.status(400).json({ error: 'No active instances found' });
+      }
+      instance = instances[0];
+    }
 
-    // Upsert discovered apps
+    const apps = await discoverApps(instance);
     const results = [];
     for (const app of apps) {
       const existing = await db.select().from(discoveredApps).where(
-        and(eq(discoveredApps.contextPath, app.contextPath), eq(discoveredApps.instanceId, instanceId))
+        and(eq(discoveredApps.contextPath, app.contextPath), eq(discoveredApps.instanceId, instance.id))
       );
 
       if (existing.length === 0) {
         const [inserted] = await db.insert(discoveredApps).values({
           id: randomUUID(),
-          instanceId,
+          instanceId: instance.id,
           name: app.displayName || app.contextPath,
           contextPath: app.contextPath,
           tomcatState: app.state,
@@ -56,6 +68,8 @@ router.post('/', async (req, res) => {
       meta: {
         discovered: apps.length,
         durationMs: Date.now() - startTime,
+        instanceId: instance.id,
+        instanceName: instance.name,
       },
       apps: results.map(r => r.app),
     });
@@ -65,12 +79,21 @@ router.post('/', async (req, res) => {
   }
 });
 
-// GET /api/discover/candidates — all discovered apps
+// GET /api/discovery/candidates — all discovered apps
 router.get('/candidates', async (req, res) => {
-  const env = getEnv();
   try {
-    const candidates = await db.select().from(discoveredApps).orderBy(desc(discoveredApps.discoveredAt));
-    res.json({ success: true, data: candidates, meta: { autoPromote: env.promote !== 'off', mode: env.promote }, });
+    const { instanceId } = req.query;
+    let candidates;
+    
+    if (instanceId && typeof instanceId === 'string') {
+      candidates = await db.select().from(discoveredApps)
+        .where(eq(discoveredApps.instanceId, instanceId))
+        .orderBy(desc(discoveredApps.discoveredAt));
+    } else {
+      candidates = await db.select().from(discoveredApps).orderBy(desc(discoveredApps.discoveredAt));
+    }
+    
+    res.json({ success: true, data: candidates });
   } catch (error) {
     console.error('[discovery] GET /candidates error:', error);
     res.status(500).json({ error: 'Failed to fetch candidates' });
@@ -80,13 +103,32 @@ router.get('/candidates', async (req, res) => {
 // GET /api/discovery/debug — raw scraper output, no DB write
 router.get('/debug', async (req, res) => {
   try {
+    const { instanceId } = req.query;
+    let instance: TomcatInstance;
+    
+    if (instanceId && typeof instanceId === 'string') {
+      const instances = await db.select().from(tomcatInstances).where(eq(tomcatInstances.id, instanceId));
+      if (instances.length === 0) {
+        return res.status(404).json({ error: 'Instance not found' });
+      }
+      instance = instances[0];
+    } else {
+      const instances = await db.select().from(tomcatInstances).where(eq(tomcatInstances.isActive, true));
+      if (instances.length === 0) {
+        return res.status(400).json({ error: 'No active instances found' });
+      }
+      instance = instances[0];
+    }
+
     const [apps, health, jvm] = await Promise.all([
-      discoverApps(),
-      fetchInstanceHealth(),
-      fetchJvmSnapshot(),
+      discoverApps(instance),
+      fetchInstanceHealth(instance),
+      fetchJvmSnapshot(instance),
     ]);
     res.json({
       success: true,
+      instanceId: instance.id,
+      instanceName: instance.name,
       appCount: apps.length,
       apps: apps.slice(0, 10),
       healthConnectors: health.connectors.length,

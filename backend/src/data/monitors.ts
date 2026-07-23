@@ -1,3 +1,6 @@
+/**
+ * Data access layer for monitors — CRUD operations, check result recording, state transitions, and discovery promotion
+ */
 import { eq, desc, and, sql } from 'drizzle-orm';
 import { db } from '../db';
 import {
@@ -11,12 +14,30 @@ import {
 import type { PingResult } from '../services/pinger';
 import {broadcast} from '../services/broadcaster';
 
-export async function getAllMonitors() {
-  const allMonitors = await db.select().from(monitors).orderBy(desc(monitors.createdAt));
+/**
+ * Fetches all monitors with 7 and 30-day uptime statistics.
+ *
+ * @param instanceId - Optional filter to only return monitors for a specific instance
+ * @returns An array of monitors enriched with uptime and latest check details.
+ */
+export async function getAllMonitors(instanceId?: string) {
+  let allMonitors;
+  if (instanceId) {
+    allMonitors = await db
+      .select({
+        monitor: monitors,
+        instanceId: discoveredApps.instanceId,
+      })
+      .from(monitors)
+      .innerJoin(discoveredApps, eq(monitors.discoveredAppId, discoveredApps.id))
+      .where(eq(discoveredApps.instanceId, instanceId))
+      .orderBy(desc(monitors.createdAt));
+    allMonitors = allMonitors.map(row => row.monitor);
+  } else {
+    allMonitors = await db.select().from(monitors).orderBy(desc(monitors.createdAt));
+  }
   if (allMonitors.length === 0) return [];
 
-  // severity: down surfaces first, then unknown, then stable.
-  // doing this serverside so every consumer gets the same order.
   allMonitors.sort((a, b) => {
     const rank = (s: string) => s === 'DOWN' ? 0 : s === 'UNKNOWN' ? 1 : 2;
     return rank(a.status) - rank(b.status);
@@ -26,13 +47,11 @@ export async function getAllMonitors() {
   const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
   const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
 
-  // Fetch all recent check results in one query, then filter in JS
   const allChecks = await db
     .select()
     .from(checkResults)
     .orderBy(desc(checkResults.checkedAt));
 
-  // Group by monitor
   const checksByMonitor = new Map<string, typeof allChecks>();
   for (const check of allChecks) {
     const list = checksByMonitor.get(check.monitorId) ?? [];
@@ -67,6 +86,12 @@ export async function getAllMonitors() {
 }
 
 
+/**
+ * Retrieves a specific monitor by its ID.
+ *
+ * @param id
+ * @returns The monitor object or null if not found.
+ */
 export async function getMonitorById(id: string) {
   const results = await db
     .select()
@@ -76,6 +101,12 @@ export async function getMonitorById(id: string) {
   return results[0] ?? null;
 }
 
+/**
+ * Retrieves all active monitors that are currently enabled.
+ *
+ * @param None
+ * @returns An array of enabled monitor objects.
+ */
 export async function getEnabledMonitors() {
   return db
     .select()
@@ -83,11 +114,18 @@ export async function getEnabledMonitors() {
     .where(eq(monitors.isEnabled, true));
 }
 
+/**
+ * Creates a new monitor from either manual input or a discovered app candidate.
+ *
+ * @param data
+ * @returns The newly created monitor.
+ */
 export async function createMonitor(data: {
   name: string;
   url?: string;
   environment?: 'Dev' | 'QA' | 'Prod';
   discoveredAppId?: string;
+  instanceId?: string;
   createdBy?: string;
 }) {
   // when url is omitted, derive it from the discovered app's instance
@@ -156,6 +194,13 @@ export async function createMonitor(data: {
   return monitor;
 }
 
+/**
+ * Records a ping result and handles monitor status transitions.
+ *
+ * @param id
+ * @param result
+ * @returns The updated monitor object.
+ */
 export async function updateMonitorStatus(
   id: string,
   result: PingResult
@@ -228,6 +273,13 @@ export async function updateMonitorStatus(
   return updated;
 }
 
+/**
+ * Enables or disables a specific monitor.
+ *
+ * @param id
+ * @param enabled
+ * @returns The updated monitor or null if not found.
+ */
 export async function toggleMonitor(id: string, enabled: boolean) {
   const [updated] = await db
     .update(monitors)
@@ -237,6 +289,12 @@ export async function toggleMonitor(id: string, enabled: boolean) {
   return updated ?? null;
 }
 
+/**
+ * Permanently deletes a monitor and logs the event.
+ *
+ * @param id
+ * @returns The deleted monitor or null if not found.
+ */
 export async function deleteMonitor(id: string) {
   const [deleted] = await db
     .delete(monitors)
@@ -253,6 +311,13 @@ export async function deleteMonitor(id: string) {
   return deleted ?? null;
 }
 
+/**
+ * Retrieves the most recent health check results for a monitor.
+ *
+ * @param monitorId
+ * @param limit
+ * @returns An array of check results.
+ */
 export async function getMonitorHistory(monitorId: string, limit = 100) {
   return db
     .select()
@@ -262,6 +327,13 @@ export async function getMonitorHistory(monitorId: string, limit = 100) {
     .limit(limit);
 }
 
+/**
+ * Retrieves the historical state changes (e.g., UP to DOWN) for a monitor.
+ *
+ * @param monitorId
+ * @param limit
+ * @returns An array of state transitions.
+ */
 export async function getStateTransitions(monitorId: string, limit = 50) {
   return db
     .select()
@@ -271,7 +343,21 @@ export async function getStateTransitions(monitorId: string, limit = 50) {
     .limit(limit);
 }
 
-export async function getDiscoveredCandidates() {
+/**
+ * Retrieves newly discovered Tomcat apps that haven't been promoted to monitors yet.
+ *
+ * @param instanceId - Optional filter to only return candidates for a specific instance
+ * @returns An array of discovered app candidates.
+ */
+export async function getDiscoveredCandidates(instanceId?: string) {
+  if (instanceId) {
+    return db
+      .select()
+      .from(discoveredApps)
+      .where(and(eq(discoveredApps.isPromoted, false), eq(discoveredApps.instanceId, instanceId)))
+      .orderBy(desc(discoveredApps.discoveredAt));
+  }
+  
   return db
     .select()
     .from(discoveredApps)
@@ -279,6 +365,12 @@ export async function getDiscoveredCandidates() {
     .orderBy(desc(discoveredApps.discoveredAt));
 }
 
+/**
+ * Updates an existing discovered app or inserts a new one if it was just found.
+ *
+ * @param data
+ * @returns The upserted discovered app record.
+ */
 export async function upsertDiscoveredApp(data: {
   instanceId: string;
   name: string;
@@ -316,6 +408,13 @@ export async function upsertDiscoveredApp(data: {
   return created;
 }
 
+/**
+ * Promotes a discovered Tomcat app to an actively monitored endpoint.
+ *
+ * @param candidateId
+ * @param options
+ * @returns The newly created monitor or null if the candidate/instance was not found.
+ */
 export async function promoteCandidate(
   candidateId: string,
   options: {

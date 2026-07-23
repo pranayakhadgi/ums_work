@@ -1,0 +1,1 @@
+ALTER TABLE `monitors` ADD `instance_id` text REFERENCES tomcat_instances(id);

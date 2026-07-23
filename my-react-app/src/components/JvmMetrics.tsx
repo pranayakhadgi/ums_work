@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { fetchLatestJvm } from '../api/health';
+import { useInstanceStore } from '../store/instanceStore';
 import { JVM_MS, POLL_BUFFER_MS } from '../api/intervals';
 
 interface JvmSnapshot {
@@ -35,11 +36,12 @@ interface JvmSnapshot {
 export default function JvmMetrics() {
   const [snapshots, setSnapshots] = useState<JvmSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
+  const { currentInstanceId } = useInstanceStore();
 
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetchLatestJvm();
+        const res = await fetchLatestJvm(currentInstanceId ?? undefined);
         if (res.success && Array.isArray(res.data)) {
           setSnapshots(res.data);
         }
@@ -52,7 +54,7 @@ export default function JvmMetrics() {
     load();
     const interval = setInterval(load, JVM_MS + POLL_BUFFER_MS);
     return () => clearInterval(interval);
-  }, []);
+  }, [currentInstanceId]);
 
   if (loading) return (
     <section className="dash-section">

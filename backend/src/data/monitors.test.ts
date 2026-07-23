@@ -41,7 +41,8 @@ function createTestDb() {
       tomcat_state TEXT NOT NULL,
       discovered_at INTEGER NOT NULL DEFAULT (unixepoch()),
       last_seen_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      is_promoted INTEGER NOT NULL DEFAULT 0
+      is_promoted INTEGER NOT NULL DEFAULT 0,
+      sessions INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE monitors (
@@ -115,9 +116,36 @@ function createTestDb() {
 
 // seed a monitor row and return its id
 async function seedMonitor(db: ReturnType<typeof drizzle>, status = 'UNKNOWN') {
+  const instanceId = crypto.randomUUID();
+  const discoveredAppId = crypto.randomUUID();
+  
+  // Insert instance
+  await db.insert(schema.tomcatInstances).values({
+    id: instanceId,
+    name: 'test-instance',
+    scheme: 'http',
+    host: 'localhost',
+    port: 8080,
+    managerUrl: 'http://localhost:8080/manager',
+    managerUser: 'admin',
+    managerPass: 'admin',
+    environment: 'Dev',
+    isActive: true,
+  });
+  
+  // Insert discovered app
+  await db.insert(schema.discoveredApps).values({
+    id: discoveredAppId,
+    instanceId,
+    name: 'test-app',
+    contextPath: '/test',
+    tomcatState: 'running',
+  });
+  
   const id = crypto.randomUUID();
   await db.insert(schema.monitors).values({
     id,
+    discoveredAppId,
     name: 'test-monitor',
     url: 'http://localhost:8080/test',
     status,

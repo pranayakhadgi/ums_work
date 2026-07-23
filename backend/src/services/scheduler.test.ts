@@ -41,7 +41,8 @@ function createTestDb() {
       tomcat_state TEXT NOT NULL,
       discovered_at INTEGER NOT NULL DEFAULT (unixepoch()),
       last_seen_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      is_promoted INTEGER NOT NULL DEFAULT 0
+      is_promoted INTEGER NOT NULL DEFAULT 0,
+      sessions INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE monitors (
@@ -123,10 +124,36 @@ describe('scheduler runMonitors regression', () => {
   it('produces the same rows as updateMonitorStatus for equivalent inputs', async () => {
     const { db } = createTestDb();
 
+    // seed instance and discovered app
+    const instanceId = crypto.randomUUID();
+    const discoveredAppId = crypto.randomUUID();
+    
+    await db.insert(schema.tomcatInstances).values({
+      id: instanceId,
+      name: 'test-instance',
+      scheme: 'http',
+      host: 'localhost',
+      port: 8080,
+      managerUrl: 'http://localhost:8080/manager',
+      managerUser: 'admin',
+      managerPass: 'admin',
+      environment: 'Dev',
+      isActive: true,
+    });
+    
+    await db.insert(schema.discoveredApps).values({
+      id: discoveredAppId,
+      instanceId,
+      name: 'test-app',
+      contextPath: '/test',
+      tomcatState: 'running',
+    });
+
     // seed a monitor with status UP
     const monitorId = crypto.randomUUID();
     await db.insert(schema.monitors).values({
       id: monitorId,
+      discoveredAppId,
       name: 'regression-test',
       url: 'http://localhost:9999/test',
       status: 'UP',
@@ -196,9 +223,35 @@ describe('scheduler runMonitors regression', () => {
   it('UNKNOWN → UP does not create a transition (guard applies after refactor)', async () => {
     const { db } = createTestDb();
 
+    // seed instance and discovered app
+    const instanceId = crypto.randomUUID();
+    const discoveredAppId = crypto.randomUUID();
+    
+    await db.insert(schema.tomcatInstances).values({
+      id: instanceId,
+      name: 'test-instance',
+      scheme: 'http',
+      host: 'localhost',
+      port: 8080,
+      managerUrl: 'http://localhost:8080/manager',
+      managerUser: 'admin',
+      managerPass: 'admin',
+      environment: 'Dev',
+      isActive: true,
+    });
+    
+    await db.insert(schema.discoveredApps).values({
+      id: discoveredAppId,
+      instanceId,
+      name: 'test-app',
+      contextPath: '/guard',
+      tomcatState: 'running',
+    });
+
     const monitorId = crypto.randomUUID();
     await db.insert(schema.monitors).values({
       id: monitorId,
+      discoveredAppId,
       name: 'guard-test',
       url: 'http://localhost:9999/guard',
       status: 'UNKNOWN',

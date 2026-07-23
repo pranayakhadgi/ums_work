@@ -14,11 +14,27 @@ export interface Monitor {
   createdAt: string;
 }
 
-export async function fetchMonitors(): Promise<Monitor[]> {
-  const res = await fetch(BASE);
+/**
+ * Build a query string that includes instanceId when provided.
+ * Returns '' if instanceId is undefined/null/empty.
+ */
+function instanceParam(instanceId?: string): string {
+  return instanceId ? `?instanceId=${encodeURIComponent(instanceId)}` : '';
+}
+
+export async function fetchMonitors(instanceId?: string): Promise<Monitor[]> {
+  const res = await fetch(`${BASE}${instanceParam(instanceId)}`);
   if (!res.ok) throw new Error('Failed to fetch monitors');
   const data = await res.json();
   return Array.isArray(data) ? data : data.monitors ?? [];
+}
+
+export async function fetchAggregateHealth(instanceId?: string): Promise<{ data: unknown[] }> {
+  const base = `${BASE}/aggregate/health?window=4&bucket=5`;
+  const url = instanceId ? `${base}&instanceId=${encodeURIComponent(instanceId)}` : base;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Failed to fetch aggregate health');
+  return res.json();
 }
 
 export async function addMonitorsBulk(items: { name: string; url: string }[]): Promise<Monitor[]> {
@@ -36,8 +52,13 @@ export async function addMonitorsBulk(items: { name: string; url: string }[]): P
   return res.json();
 }
 
-export async function discoverMonitors(): Promise<Monitor[]> {
-  const res = await fetch('/api/discovery', { method: 'POST'});
+export async function discoverMonitors(instanceId?: string): Promise<Monitor[]> {
+  const body = instanceId ? JSON.stringify({ instanceId }) : undefined;
+  const res = await fetch('/api/discovery', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Unknown error' }));
     throw new Error(err.error || err.message || 'Failed to discover monitors');

@@ -1,4 +1,31 @@
 /**
+ * Health Score module.
+ * Provides functions to evaluate application health based on check statistics.
+ */
+
+/**
+ * Represents raw aggregated bucket data from health checks.
+ */
+export interface RawBucket {
+  latencies: number[];      // all responseTimeMs values in bucket
+  degradedChecks: number;   // count of UP checks with errorCategory != null
+  downChecks: number;       // count of DOWN checks
+  totalChecks: number;      // total checks in bucket
+}
+
+/**
+ * Represents the final calculated health score and its constituent penalties.
+ */
+export interface HealthScoreResult {
+  score: number;            // 0-100
+  latencyPenalty: number;   // 0-35
+  degradedPenalty: number;  // 0-35
+  downPenalty: number;      // 0-30
+  p95Latency: number;       // p95 ms (0 if no latency data)
+  avgLatency: number;       // average ms (0 if no latency data)
+}
+
+/**
  * Calculates a 0-100 health score from per-bucket check data.
  *
  * Three independent signals:
@@ -9,26 +36,9 @@
  * Floor guarantee: if no down and no degraded checks, score never
  * drops below 50 (latency alone cannot crash a healthy service).
  *
- * @param bucket - Raw aggregated bucket data
- * @returns Score result with breakdown for transparency
+ * @param bucket
+ * @returns
  */
-
-export interface RawBucket {
-  latencies: number[];      // all responseTimeMs values in bucket
-  degradedChecks: number;   // count of UP checks with errorCategory != null
-  downChecks: number;       // count of DOWN checks
-  totalChecks: number;      // total checks in bucket
-}
-
-export interface HealthScoreResult {
-  score: number;            // 0-100
-  latencyPenalty: number;   // 0-35
-  degradedPenalty: number;  // 0-35
-  downPenalty: number;      // 0-30
-  p95Latency: number;       // p95 ms (0 if no latency data)
-  avgLatency: number;       // average ms (0 if no latency data)
-}
-
 export function calculateHealthScore(bucket: RawBucket): HealthScoreResult {
   // p95 latency from all checks in bucket
   const sortedLat = [...bucket.latencies].sort((a, b) => a - b);

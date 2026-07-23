@@ -1,8 +1,17 @@
+/**
+ * WebSocket broadcaster module.
+ * Pushes real-time status updates to dashboard clients.
+ */
 import { WebSocketServer, WebSocket } from 'ws';
 import type { Server } from "http";
 
 let wss: WebSocketServer | null = null;
 
+/**
+ * Initializes the WebSocket server using the provided HTTP server.
+ * @param server
+ * @returns
+ */
 export function initWebSocket(server: Server): WebSocketServer {
   wss = new WebSocketServer({ server });
 
@@ -22,6 +31,10 @@ export function initWebSocket(server: Server): WebSocketServer {
   return wss;
 }
 
+/**
+ * Broadcasts data to all currently connected WebSocket clients.
+ * @param data
+ */
 export function broadcast(data: unknown): void {
   if (!wss) return;
 

@@ -1,3 +1,6 @@
+/**
+ * Drizzle ORM schema definitions for all database tables
+ */
 import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
 
 
@@ -41,6 +44,7 @@ export const discoveredApps = sqliteTable('discovered_apps', {
 export const monitors = sqliteTable('monitors', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
   discoveredAppId: text('discovered_app_id').references(() => discoveredApps.id),
+  instanceId: text('instance_id').references(() => tomcatInstances.id),
   name: text('name').notNull(),
   url: text('url').notNull(),
   environment: text('environment').notNull().default('Dev'),

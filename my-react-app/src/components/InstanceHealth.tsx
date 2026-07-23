@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { fetchLatestHealth } from '../api/health';
+import { useInstanceStore } from '../store/instanceStore';
 import { HEALTH_MS, POLL_BUFFER_MS } from '../api/intervals';
 
 interface HealthSnapshot {
@@ -30,11 +31,12 @@ interface HealthSnapshot {
 export default function InstanceHealth() {
   const [health, setHealth] = useState<HealthSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
+  const { currentInstanceId } = useInstanceStore();
 
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetchLatestHealth();
+        const res = await fetchLatestHealth(currentInstanceId ?? undefined);
         if (res.success && Array.isArray(res.data)) {
           setHealth(res.data);
         }
@@ -47,7 +49,7 @@ export default function InstanceHealth() {
     load();
     const interval = setInterval(load, HEALTH_MS + POLL_BUFFER_MS);
     return () => clearInterval(interval);
-  }, []);
+  }, [currentInstanceId]);
 
   const fmtMem = (bytes?: number) => {
     if (bytes == null || bytes === 0) return '0.0';

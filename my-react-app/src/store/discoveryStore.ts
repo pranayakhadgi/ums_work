@@ -17,7 +17,7 @@ interface DiscoveryStore {
   candidates: DiscoveredApp[];
   loading: boolean;
   error: string | null;
-  loadCandidates: () => Promise<void>;
+  loadCandidates: (instanceId?: string) => Promise<void>;
   promote: (app: DiscoveredApp) => Promise<void>;
   promoteAll: (apps: DiscoveredApp[]) => Promise<void>;
 }
@@ -27,10 +27,10 @@ export const useDiscoveryStore = create<DiscoveryStore>((set, get) => ({
   loading: false,
   error: null,
 
-  loadCandidates: async () => {
+  loadCandidates: async (instanceId?: string) => {
     set({ loading: true, error: null });
     try {
-      const res = await fetchDiscoveryCandidates();
+      const res = await fetchDiscoveryCandidates(instanceId);
       set({ candidates: res.data ?? [], loading: false });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : 'an unknown error occurred', loading: false });
